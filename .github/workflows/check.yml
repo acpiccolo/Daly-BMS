@@ -1,0 +1,95 @@
+permissions:
+  contents: read
+on:
+  # Run on push to main branch and on pull requests
+  push:
+    branches: [main]
+  pull_request:
+concurrency:
+  # Only run the latest workflow
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+name: check
+jobs:
+  typos:
+    name: typos
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      checks: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check for typos
+        uses: crate-ci/typos@v1.18.2
+  conventional_commit:
+    name: conventional commit check
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+          # Fetch all commits to generate the changelog
+          fetch-depth: 0
+      - name: Conventional commit check
+        uses: cocogitto/cocogitto-action@main
+        with:
+          check: true
+  conventional_commit_pr:
+    name: PR conventional commit check
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+          # Fetch all commits to generate the changelog
+          fetch-depth: 0
+          # pick the pr HEAD instead of the merge commit
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Conventional commit check
+        uses: cocogitto/cocogitto-action@main
+        with:
+          check: true
+  clippy:
+    name: ${{ matrix.toolchain }} / clippy
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      checks: write
+    strategy:
+      fail-fast: false
+      matrix:
+        toolchain: [stable, beta]
+    steps:
+      - uses: actions/checkout@v4
+      - name: cargo clippy
+        uses: actions-rs/clippy-check@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+  audit:
+    name: cargo audit
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      checks: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install stable rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: audit check
+        uses: actions-rs/audit-check@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+  hack:
+    name: hack
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      checks: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: cargo install cargo-hack
+        uses: taiki-e/install-action@cargo-hack
+      - name: cargo hack
+        run: cargo hack --feature-powerset check
