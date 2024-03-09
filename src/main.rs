@@ -1,7 +1,6 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use clap_verbosity_flag::{InfoLevel, Verbosity};
-use dalybms_lib;
 use flexi_logger::{Logger, LoggerHandle};
 use log::*;
 use std::{ops::Deref, panic, time::Duration};
@@ -119,7 +118,7 @@ fn main() -> Result<()> {
     // minimum delay 4ms by baud rate 9600
     let delay = Duration::max(args.delay, Duration::from_millis(4));
 
-    let mut bms = dalybms_lib::Bms::new(&args.device, args.timeout)?;
+    let mut bms = dalybms_lib::serialport::DalyBMS::new(&args.device, args.timeout)?;
 
     match args.command {
         CliCommands::Status => {

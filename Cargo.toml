@@ -14,9 +14,10 @@ required-features = ["bin-dependencies"]
 
 [features]
 default = ["bin-dependencies"]
+serialport = ["dep:serialport", "dep:anyhow"]
 bin-dependencies = [
     "dep:anyhow",
-    "dep:log",
+    "serialport",
     "clap/derive",
     "dep:clap-verbosity-flag",
     "dep:clap-num",
@@ -25,10 +26,10 @@ bin-dependencies = [
 ]
 
 [dependencies]
-serialport = "4"
 # Requirements for bin
+log = { version = "0.4" }
 anyhow = { version = "1", optional = true }
-log = { version = "0.4", optional = true }
+serialport = { version = "4", optional = true }
 clap = { version = "4", optional = true }
 clap-verbosity-flag = { version = "2", optional = true }
 clap-num = { version = "1", optional = true }

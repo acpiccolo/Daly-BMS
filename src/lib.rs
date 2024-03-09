@@ -1,4 +1,7 @@
-mod bms;
-mod protocol;
+mod error;
+pub mod protocol;
 
-pub use bms::*;
+pub use error::Error;
+
+#[cfg(feature = "serialport")]
+pub mod serialport;
