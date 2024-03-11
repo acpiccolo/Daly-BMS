@@ -1,11 +1,18 @@
 use crate::Error;
 use std::fmt;
 
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
+
 #[derive(Debug)]
 #[repr(u8)]
 pub enum Address {
     Host = 0x40,
 }
+
+// https://minimalmodbus.readthedocs.io/en/stable/serialcommunication.html#timing-of-the-serial-communications
+// minimum delay 4ms by baud rate 9600
+pub const MINIMUM_DELAY: std::time::Duration = std::time::Duration::from_millis(4);
 
 const TX_BUFFER_LENGTH: usize = 13;
 const RX_BUFFER_LENGTH: usize = 13;
@@ -68,6 +75,7 @@ fn validate_checksum(buffer: &[u8]) -> std::result::Result<(), Error> {
 }
 
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct Soc {
     pub total_voltage: f32,
     pub current: f32, // negative=charging, positive=discharging
@@ -99,6 +107,7 @@ impl Soc {
 }
 
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct CellVoltageRange {
     pub highest_voltage: f32,
     pub highest_cell: u8,
@@ -130,6 +139,7 @@ impl CellVoltageRange {
 }
 
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct TemperatureRange {
     pub highest_temperature: i8,
     pub highest_sensor: u8,
@@ -162,6 +172,7 @@ impl TemperatureRange {
 }
 
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum MosfetMode {
     Stationary,
     Charging,
@@ -169,6 +180,7 @@ pub enum MosfetMode {
 }
 
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct MosfetStatus {
     pub mode: MosfetMode,
     pub charging_mosfet: bool,
@@ -214,6 +226,7 @@ impl MosfetStatus {
 }
 
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct IOState {
     pub di1: bool,
     pub di2: bool,
@@ -226,6 +239,7 @@ pub struct IOState {
 }
 
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct Status {
     pub cells: u8,
     pub temperature_sensors: u8,
@@ -399,6 +413,7 @@ impl CellBalanceState {
 }
 
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum ErrorCode {
     CellVoltHighLevel1,
     CellVoltHighLevel2,

@@ -1,25 +1,36 @@
 use crate::protocol::*;
 use anyhow::{bail, Context, Result};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
+#[derive(Debug)]
 pub struct DalyBMS {
     serial: Box<dyn serialport::SerialPort>,
+    last_execution: Instant,
+    delay: Duration,
     status: Option<Status>,
 }
 
 impl DalyBMS {
-    pub fn new(port: &str, timeout: Duration) -> Result<Self> {
+    pub fn new(port: &str) -> Result<Self> {
         Ok(Self {
             serial: serialport::new(port, 9600)
                 .data_bits(serialport::DataBits::Eight)
                 .parity(serialport::Parity::None)
                 .stop_bits(serialport::StopBits::One)
                 .flow_control(serialport::FlowControl::None)
-                .timeout(timeout)
                 .open()
                 .with_context(|| format!("Cannot open serial port '{}'", port))?,
+            last_execution: Instant::now(),
+            delay: MINIMUM_DELAY,
             status: None,
         })
+    }
+
+    fn serial_await_delay(&self) {
+        let last_exec_diff = Instant::now().duration_since(self.last_execution);
+        if let Some(time_until_delay_reached) = self.delay.checked_sub(last_exec_diff) {
+            std::thread::sleep(time_until_delay_reached);
+        }
     }
 
     fn send_bytes(&mut self, tx_buffer: &[u8]) -> Result<()> {
@@ -41,13 +52,18 @@ impl DalyBMS {
                 break;
             }
         }
+        self.serial_await_delay();
 
         self.serial
             .write_all(tx_buffer)
             .with_context(|| "Cannot write to serial")?;
-        self.serial
-            .flush()
-            .with_context(|| "Cannot flush serial connection")
+
+        if false {
+            self.serial
+                .flush()
+                .with_context(|| "Cannot flush serial connection")?;
+        }
+        Ok(())
     }
 
     fn receive_bytes(&mut self, size: usize) -> Result<Vec<u8>> {
@@ -59,8 +75,20 @@ impl DalyBMS {
             .read_exact(&mut rx_buffer)
             .with_context(|| "Cannot receive response")?;
 
+        self.last_execution = Instant::now();
+
         log::trace!("receive_bytes: {:02X?}", rx_buffer);
         Ok(rx_buffer)
+    }
+
+    pub fn set_timeout(&mut self, timeout: Duration) -> Result<()> {
+        self.serial
+            .set_timeout(timeout)
+            .map_err(|err| anyhow::Error::from(err))
+    }
+
+    pub fn set_delay(&mut self, delay: Duration) {
+        self.delay = Duration::max(delay, MINIMUM_DELAY);
     }
 
     pub fn get_soc(&mut self) -> Result<Soc> {

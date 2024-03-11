@@ -114,11 +114,9 @@ fn main() -> Result<()> {
 
     let _log_handle = logging_init(args.verbose.log_level_filter());
 
-    // https://minimalmodbus.readthedocs.io/en/stable/serialcommunication.html#timing-of-the-serial-communications
-    // minimum delay 4ms by baud rate 9600
-    let delay = Duration::max(args.delay, Duration::from_millis(4));
-
-    let mut bms = dalybms_lib::serialport::DalyBMS::new(&args.device, args.timeout)?;
+    let mut bms = dalybms_lib::serialport::DalyBMS::new(&args.device)?;
+    bms.set_timeout(args.timeout)?;
+    bms.set_delay(args.delay);
 
     match args.command {
         CliCommands::Status => {
@@ -132,17 +130,14 @@ fn main() -> Result<()> {
         }
         CliCommands::CellVoltages => {
             let _ = bms.get_status()?;
-            std::thread::sleep(delay);
             println!("CellVoltages: {:?}", bms.get_cell_voltages()?);
         }
         CliCommands::Temperatures => {
             let _ = bms.get_status()?;
-            std::thread::sleep(delay);
             println!("Temperatures: {:?}", bms.get_cell_temperatures()?);
         }
         CliCommands::Balancing => {
             let _ = bms.get_status()?;
-            std::thread::sleep(delay);
             println!("Balancing: {:?}", bms.get_balancing_status()?);
         }
         CliCommands::Errors => {
@@ -150,21 +145,13 @@ fn main() -> Result<()> {
         }
         CliCommands::All => {
             println!("Status: {:?}", bms.get_status()?);
-            std::thread::sleep(delay);
             println!("SOC: {:?}", bms.get_soc()?);
-            std::thread::sleep(delay);
             println!("CellVoltageRange: {:?}", bms.get_cell_voltage_range()?);
-            std::thread::sleep(delay);
             println!("TemperatureRange: {:?}", bms.get_temperature_range()?);
-            std::thread::sleep(delay);
             println!("Mosfet: {:?}", bms.get_mosfet_status()?);
-            std::thread::sleep(delay);
             println!("CellVoltages: {:?}", bms.get_cell_voltages()?);
-            std::thread::sleep(delay);
             println!("CellTemperatures: {:?}", bms.get_cell_temperatures()?);
-            std::thread::sleep(delay);
             println!("Balancing: {:?}", bms.get_balancing_status()?);
-            std::thread::sleep(delay);
             println!("Errors: {:?}", bms.get_errors()?);
         }
         CliCommands::SetSoc { soc_percent } => bms.set_soc(soc_percent)?,
