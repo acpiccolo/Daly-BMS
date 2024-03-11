@@ -16,7 +16,12 @@ required-features = ["bin-dependencies"]
 serde = ["dep:serde"]
 default = ["bin-dependencies"]
 serialport = ["dep:serialport", "dep:anyhow"]
-tokio-async = ["dep:tokio-serial", "tokio/time", "tokio/io-util", "dep:anyhow"]
+tokio-serial-async = [
+    "dep:tokio-serial",
+    "tokio/time",
+    "tokio/io-util",
+    "dep:anyhow",
+]
 bin-dependencies = [
     "dep:anyhow",
     "serialport",
@@ -28,12 +33,12 @@ bin-dependencies = [
 ]
 
 [dependencies]
+log = { version = "0.4" }
 serde = { version = "1", features = ["derive"], optional = true }
 serialport = { version = "4", optional = true }
 tokio-serial = { version = "5", optional = true }
 tokio = { version = "1", default-features = false, optional = true }
 # Requirements for bin
-log = { version = "0.4" }
 anyhow = { version = "1", optional = true }
 clap = { version = "4", optional = true }
 clap-verbosity-flag = { version = "2", optional = true }

@@ -34,7 +34,7 @@ cog verify --file $1
 path = "CHANGELOG.md"
 template = "remote"
 remote = "github.com"
-repository = "R413D08-controller"
+repository = "Daly-BMS"
 owner = "acpiccolo"
 authors = [{ signature = "Andreas Campagna", username = "acpiccolo" }]
 

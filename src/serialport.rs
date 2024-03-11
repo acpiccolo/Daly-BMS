@@ -84,7 +84,7 @@ impl DalyBMS {
     pub fn set_timeout(&mut self, timeout: Duration) -> Result<()> {
         self.serial
             .set_timeout(timeout)
-            .map_err(|err| anyhow::Error::from(err))
+            .map_err(anyhow::Error::from)
     }
 
     pub fn set_delay(&mut self, delay: Duration) {

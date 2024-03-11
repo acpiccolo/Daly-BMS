@@ -91,7 +91,7 @@ impl DalyBMS {
         Ok(())
         // self.serial
         //     .set_timeout(timeout)
-        //     .map_err(|err| anyhow::Error::from(err))
+        //     .map_err(anyhow::Error::from)
     }
 
     pub fn set_delay(&mut self, delay: Duration) {

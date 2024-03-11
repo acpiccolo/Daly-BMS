@@ -7,18 +7,6 @@
 # Daly BMS
 This RUST project can read and write a Daly BMS module from the command line.
 
-## Hardware
-The following hardware is required for this project:
-* One or more R413D08 8 channel modules.
-* One or more relay modules 1-8 channels.
-* One USB-RS485 converter.
-
-![R413D08 controller](/images/r413d08.png)
-
-### Data sheet R413D08
-* Operating Voltage: DC 5 Volt (5V version) or DC 6-24 Volt (12V version)
-* Operating Current: 10-15 Milli-Ampere
-
 ## Compilation
 1. Install Rust e.g. using [these instructions](https://www.rust-lang.org/learn/get-started).
 2. Ensure that you have a C compiler and linker.
@@ -30,20 +18,14 @@ The following hardware is required for this project:
 ## Getting started
 To see all available commands:
 ```
-ch8ctl --help
-```
-For TCP Modbus connected temperature collectors:
-```
-ch8ctl tcp 192.168.0.222:502 read
+dalybms --help
 ```
 
 ### Cargo Features
 | Feature | Purpose | Default |
 | :--- | :------ | :-----: |
-| `tokio-rtu-sync` | Enable the implementation for the tokio modbus synchronous RTU client | ✅ |
-| `tokio-rtu` | Enable the implementation for the tokio modbus asynchronous RTU client | ✅ |
-| `tokio-tcp-sync` | Enable the implementation for the tokio modbus synchronous TCP client | - |
-| `tokio-tcp` | Enable the implementation for the tokio modbus asynchronous TCP client | - |
+| `serialport` | Enable the implementation for the synchronous serialport client | - |
+| `tokio-serial-async` | Enable the implementation for the tokio serial asynchronous client | - |
 | `bin-dependencies` | Enable all features required by the binary | ✅ |
 
 
