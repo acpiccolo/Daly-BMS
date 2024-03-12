@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use clap_verbosity_flag::{InfoLevel, Verbosity};
 use flexi_logger::{Logger, LoggerHandle};
@@ -21,10 +21,14 @@ pub enum CliCommands {
     Soc,
     /// Show mosfet status
     Mosfet,
+    /// Show voltage range
+    VoltageRange,
+    /// Show temperature range
+    TemperatureRange,
     /// Show cell voltages
     CellVoltages,
     /// Show temperature sensor values
-    Temperatures,
+    CellTemperatures,
     /// Show cell balancing status
     Balancing,
     /// Show BMS errors
@@ -64,12 +68,12 @@ struct CliArgs {
     #[command(subcommand)]
     command: CliCommands,
 
-    /// Modbus timeout in milliseconds
+    /// Serial Input/Output operations timeout
     #[arg(value_parser = humantime::parse_duration, long, default_value = "500ms")]
     timeout: Duration,
 
     // Some USB - RS485 dongles requires at least 10ms to switch between TX and RX, so use a save delay between frames
-    /// Delay between multiple modbus commands in milliseconds
+    /// Delay between multiple commands
     #[arg(value_parser = humantime::parse_duration, long, default_value = "50ms")]
     delay: Duration,
 }
@@ -109,6 +113,85 @@ fn logging_init(loglevel: LevelFilter) -> LoggerHandle {
     log_handle
 }
 
+macro_rules! print_status {
+    ($bms:expr) => {
+        println!(
+            "Status: {:?}",
+            $bms.get_status().with_context(|| "Cannot get status")?
+        )
+    };
+}
+macro_rules! print_soc {
+    ($bms:expr) => {
+        println!(
+            "SOC: {:?}",
+            $bms.get_soc().with_context(|| "Cannot get SOC")?
+        )
+    };
+}
+macro_rules! print_mosfet_status {
+    ($bms:expr) => {
+        println!(
+            "Mosfet: {:?}",
+            $bms.get_mosfet_status()
+                .with_context(|| "Cannot get mosfet status")?
+        )
+    };
+}
+macro_rules! print_voltage_range {
+    ($bms:expr) => {
+        println!(
+            "Voltage range: {:?}",
+            $bms.get_cell_voltage_range()
+                .with_context(|| "Cannot get voltage range")?
+        )
+    };
+}
+macro_rules! print_temperature_range {
+    ($bms:expr) => {
+        println!(
+            "Temperature range: {:?}",
+            $bms.get_temperature_range()
+                .with_context(|| "Cannot get temperature range")?
+        )
+    };
+}
+macro_rules! print_cell_voltages {
+    ($bms:expr) => {
+        println!(
+            "Cell Voltages: {:?}",
+            $bms.get_cell_voltages()
+                .with_context(|| "Cannot get cell voltages")?
+        )
+    };
+}
+macro_rules! print_cell_temperatures {
+    ($bms:expr) => {
+        println!(
+            "Cell temperatures: {:?}",
+            $bms.get_cell_temperatures()
+                .with_context(|| "Cannot get cell temperatures")?
+        )
+    };
+}
+macro_rules! print_balancing_status {
+    ($bms:expr) => {
+        println!(
+            "Balancing status: {:?}",
+            $bms.get_balancing_status()
+                .with_context(|| "Cannot get balancing stats")?
+        )
+    };
+}
+macro_rules! print_errors {
+    ($bms:expr) => {
+        println!(
+            "Errors: {:?}",
+            $bms.get_errors().with_context(|| "Cannot get errors")?
+        )
+    };
+}
+
 fn main() -> Result<()> {
     let args = CliArgs::parse();
 
@@ -119,44 +202,45 @@ fn main() -> Result<()> {
     bms.set_delay(args.delay);
 
     match args.command {
-        CliCommands::Status => {
-            println!("Status: {:?}", bms.get_status()?);
-        }
-        CliCommands::Soc => {
-            println!("SOC: {:?}", bms.get_soc()?);
-        }
-        CliCommands::Mosfet => {
-            println!("Mosfet: {:?}", bms.get_mosfet_status()?);
-        }
+        CliCommands::Status => print_status!(bms),
+        CliCommands::Soc => print_soc!(bms),
+        CliCommands::VoltageRange => print_voltage_range!(bms),
+        CliCommands::TemperatureRange => print_temperature_range!(bms),
+        CliCommands::Mosfet => print_mosfet_status!(bms),
         CliCommands::CellVoltages => {
-            let _ = bms.get_status()?;
-            println!("CellVoltages: {:?}", bms.get_cell_voltages()?);
+            let _ = bms.get_status().with_context(|| "Cannot get status")?;
+            print_cell_voltages!(bms);
         }
-        CliCommands::Temperatures => {
-            let _ = bms.get_status()?;
-            println!("Temperatures: {:?}", bms.get_cell_temperatures()?);
+        CliCommands::CellTemperatures => {
+            let _ = bms.get_status().with_context(|| "Cannot get status")?;
+            print_cell_temperatures!(bms);
         }
         CliCommands::Balancing => {
-            let _ = bms.get_status()?;
-            println!("Balancing: {:?}", bms.get_balancing_status()?);
+            let _ = bms.get_status().with_context(|| "Cannot get status")?;
+            print_balancing_status!(bms);
         }
-        CliCommands::Errors => {
-            println!("Errors: {:?}", bms.get_errors()?);
-        }
+        CliCommands::Errors => print_errors!(bms),
         CliCommands::All => {
-            println!("Status: {:?}", bms.get_status()?);
-            println!("SOC: {:?}", bms.get_soc()?);
-            println!("CellVoltageRange: {:?}", bms.get_cell_voltage_range()?);
-            println!("TemperatureRange: {:?}", bms.get_temperature_range()?);
-            println!("Mosfet: {:?}", bms.get_mosfet_status()?);
-            println!("CellVoltages: {:?}", bms.get_cell_voltages()?);
-            println!("CellTemperatures: {:?}", bms.get_cell_temperatures()?);
-            println!("Balancing: {:?}", bms.get_balancing_status()?);
-            println!("Errors: {:?}", bms.get_errors()?);
+            print_status!(bms);
+            print_soc!(bms);
+            print_voltage_range!(bms);
+            print_temperature_range!(bms);
+            print_mosfet_status!(bms);
+            print_cell_voltages!(bms);
+            print_cell_temperatures!(bms);
+            print_balancing_status!(bms);
+            print_errors!(bms);
+            print_soc!(bms);
         }
-        CliCommands::SetSoc { soc_percent } => bms.set_soc(soc_percent)?,
-        CliCommands::SetChargeMosfet { enable } => bms.set_charge_mosfet(enable)?,
-        CliCommands::SetDischargeMosfet { enable } => bms.set_discharge_mosfet(enable)?,
+        CliCommands::SetSoc { soc_percent } => {
+            bms.set_soc(soc_percent).with_context(|| "Cannot set SOC")?
+        }
+        CliCommands::SetChargeMosfet { enable } => bms
+            .set_charge_mosfet(enable)
+            .with_context(|| "Cannot set charge mosfet")?,
+        CliCommands::SetDischargeMosfet { enable } => bms
+            .set_discharge_mosfet(enable)
+            .with_context(|| "Cannot set discharge mosfet")?,
         CliCommands::Reset => bms.reset()?,
     }
 

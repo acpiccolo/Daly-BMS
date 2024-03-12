@@ -86,7 +86,9 @@ impl DalyBMS {
         Ok(rx_buffer)
     }
 
+    /// Sets the timeout for I/O operations
     pub fn set_timeout(&mut self, timeout: Duration) -> Result<()> {
+        log::trace!("set timeout: {:?}", timeout);
         self.io_timeout = timeout;
         Ok(())
         // self.serial
@@ -94,40 +96,53 @@ impl DalyBMS {
         //     .map_err(anyhow::Error::from)
     }
 
+    /// Delay between multiple commands
     pub fn set_delay(&mut self, delay: Duration) {
-        self.delay = Duration::max(delay, MINIMUM_DELAY);
+        if delay < MINIMUM_DELAY {
+            log::warn!(
+                "delay {:?} lower minimum {:?}, use minimum",
+                delay,
+                MINIMUM_DELAY
+            );
+            self.delay = MINIMUM_DELAY;
+        } else {
+            self.delay = delay;
+        }
+        log::trace!("set delay: {:?}", self.delay);
     }
 
     pub async fn get_soc(&mut self) -> Result<Soc> {
         self.send_bytes(&Soc::request(Address::Host)).await?;
-        Soc::decode(&self.receive_bytes(Soc::reply_size()).await?).with_context(|| "Cannot get SOC")
+        Ok(Soc::decode(&self.receive_bytes(Soc::reply_size()).await?)?)
     }
 
     pub async fn get_cell_voltage_range(&mut self) -> Result<CellVoltageRange> {
         self.send_bytes(&CellVoltageRange::request(Address::Host))
             .await?;
-        CellVoltageRange::decode(&self.receive_bytes(CellVoltageRange::reply_size()).await?)
-            .with_context(|| "Cannot get cell voltage range")
+        Ok(CellVoltageRange::decode(
+            &self.receive_bytes(CellVoltageRange::reply_size()).await?,
+        )?)
     }
 
     pub async fn get_temperature_range(&mut self) -> Result<TemperatureRange> {
         self.send_bytes(&TemperatureRange::request(Address::Host))
             .await?;
-        TemperatureRange::decode(&self.receive_bytes(TemperatureRange::reply_size()).await?)
-            .with_context(|| "Cannot get temperature range")
+        Ok(TemperatureRange::decode(
+            &self.receive_bytes(TemperatureRange::reply_size()).await?,
+        )?)
     }
 
     pub async fn get_mosfet_status(&mut self) -> Result<MosfetStatus> {
         self.send_bytes(&MosfetStatus::request(Address::Host))
             .await?;
-        MosfetStatus::decode(&self.receive_bytes(MosfetStatus::reply_size()).await?)
-            .with_context(|| "Cannot get mosfet status")
+        Ok(MosfetStatus::decode(
+            &self.receive_bytes(MosfetStatus::reply_size()).await?,
+        )?)
     }
 
     pub async fn get_status(&mut self) -> Result<Status> {
         self.send_bytes(&Status::request(Address::Host)).await?;
-        let status = Status::decode(&self.receive_bytes(Status::reply_size()).await?)
-            .with_context(|| "Cannot get status")?;
+        let status = Status::decode(&self.receive_bytes(Status::reply_size()).await?)?;
         self.status = Some(status.clone());
         Ok(status)
     }
@@ -140,13 +155,12 @@ impl DalyBMS {
         };
         self.send_bytes(&CellVoltages::request(Address::Host))
             .await?;
-        CellVoltages::decode(
+        Ok(CellVoltages::decode(
             &self
                 .receive_bytes(CellVoltages::reply_size(n_cells))
                 .await?,
             n_cells,
-        )
-        .with_context(|| "Cannot get cell voltages")
+        )?)
     }
 
     pub async fn get_cell_temperatures(&mut self) -> Result<Vec<i32>> {
@@ -158,13 +172,12 @@ impl DalyBMS {
 
         self.send_bytes(&CellTemperatures::request(Address::Host))
             .await?;
-        CellTemperatures::decode(
+        Ok(CellTemperatures::decode(
             &self
                 .receive_bytes(CellTemperatures::reply_size(n_sensors))
                 .await?,
             n_sensors,
-        )
-        .with_context(|| "Cannot get cell temperatures")
+        )?)
     }
 
     pub async fn get_balancing_status(&mut self) -> Result<Vec<bool>> {
@@ -178,43 +191,47 @@ impl DalyBMS {
 
         self.send_bytes(&CellBalanceState::request(Address::Host))
             .await?;
-        CellBalanceState::decode(
+        Ok(CellBalanceState::decode(
             &self.receive_bytes(CellBalanceState::reply_size()).await?,
             n_cells,
-        )
-        .with_context(|| "Cannot get cell balancing status")
+        )?)
     }
 
     pub async fn get_errors(&mut self) -> Result<Vec<ErrorCode>> {
         self.send_bytes(&ErrorCode::request(Address::Host)).await?;
-        ErrorCode::decode(&self.receive_bytes(ErrorCode::reply_size()).await?)
-            .with_context(|| "Cannot get errors")
+        Ok(ErrorCode::decode(
+            &self.receive_bytes(ErrorCode::reply_size()).await?,
+        )?)
     }
 
     pub async fn set_discharge_mosfet(&mut self, enable: bool) -> Result<()> {
         self.send_bytes(&SetDischargeMosfet::request(Address::Host, enable))
             .await?;
-        SetDischargeMosfet::decode(&self.receive_bytes(SetDischargeMosfet::reply_size()).await?)
-            .with_context(|| "Cannot set discharge mosfet")
+        Ok(SetDischargeMosfet::decode(
+            &self.receive_bytes(SetDischargeMosfet::reply_size()).await?,
+        )?)
     }
 
     pub async fn set_charge_mosfet(&mut self, enable: bool) -> Result<()> {
         self.send_bytes(&SetChargeMosfet::request(Address::Host, enable))
             .await?;
-        SetChargeMosfet::decode(&self.receive_bytes(SetChargeMosfet::reply_size()).await?)
-            .with_context(|| "Cannot set charge mosfet")
+        Ok(SetChargeMosfet::decode(
+            &self.receive_bytes(SetChargeMosfet::reply_size()).await?,
+        )?)
     }
 
     pub async fn set_soc(&mut self, soc_percent: f32) -> Result<()> {
         self.send_bytes(&SetSoc::request(Address::Host, soc_percent))
             .await?;
-        SetSoc::decode(&self.receive_bytes(SetSoc::reply_size()).await?)
-            .with_context(|| "Cannot set SOC")
+        Ok(SetSoc::decode(
+            &self.receive_bytes(SetSoc::reply_size()).await?,
+        )?)
     }
 
     pub async fn reset(&mut self) -> Result<()> {
         self.send_bytes(&BmsReset::request(Address::Host)).await?;
-        BmsReset::decode(&self.receive_bytes(BmsReset::reply_size()).await?)
-            .with_context(|| "Cannot reset BMS")
+        Ok(BmsReset::decode(
+            &self.receive_bytes(BmsReset::reply_size()).await?,
+        )?)
     }
 }
