@@ -10,10 +10,10 @@ This RUST project can read and write a Daly BMS module from the command line.
 ## Compilation
 1. Install Rust e.g. using [these instructions](https://www.rust-lang.org/learn/get-started).
 2. Ensure that you have a C compiler and linker.
-3. Clone `git clone https://github.com/acpiccolo/R413D08-Controller.git`
+3. Clone `git clone https://github.com/acpiccolo/Daly-BMS.git`
 4. Run `cargo install --path .` to install the binary. Alternatively,
    check out the repository and run `cargo build --release`. This will compile
-   the binary to `target/release/ch8ctl`.
+   the binary to `target/release/dalybms`.
 
 ## Getting started
 To see all available commands:
