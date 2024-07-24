@@ -15,13 +15,8 @@ required-features = ["bin-dependencies"]
 [features]
 serde = ["dep:serde"]
 default = ["bin-dependencies"]
-serialport = ["dep:serialport", "dep:anyhow"]
-tokio-serial-async = [
-    "dep:tokio-serial",
-    "tokio/time",
-    "tokio/io-util",
-    "dep:anyhow",
-]
+serialport = ["dep:serialport"]
+tokio-serial-async = ["dep:tokio-serial", "tokio/time", "tokio/io-util"]
 bin-dependencies = [
     "dep:anyhow",
     "serialport",
@@ -33,6 +28,7 @@ bin-dependencies = [
 ]
 
 [dependencies]
+thiserror = "1"
 log = { version = "0.4" }
 serde = { version = "1", features = ["derive"], optional = true }
 serialport = { version = "4", optional = true }

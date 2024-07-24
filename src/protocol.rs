@@ -1,5 +1,4 @@
 use crate::Error;
-use std::fmt;
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
@@ -412,56 +411,104 @@ impl CellBalanceState {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, thiserror::Error)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum ErrorCode {
+    #[error("Cell voltage is too high level one alarm")]
     CellVoltHighLevel1,
+    #[error("Cell voltage is too high level two alarm")]
     CellVoltHighLevel2,
+    #[error("Cell voltage is too low level one alarm")]
     CellVoltLowLevel1,
+    #[error("Cell voltage is too low level two alarm")]
     CellVoltLowLevel2,
+    #[error("Total voltage is too high level one alarm")]
     SumVoltHighLevel1,
+    #[error("Total voltage is too high level two alarm")]
     SumVoltHighLevel2,
+    #[error("Total voltage is too low level one alarm")]
     SumVoltLowLevel1,
+    #[error("Total voltage is too low level two alarm")]
     SumVoltLowLevel2,
+    #[error("Charging temperature too high level one alarm")]
     ChargeTempHighLevel1,
+    #[error("Charging temperature too high level two alarm")]
     ChargeTempHighLevel2,
+    #[error("Charging temperature too low level one alarm")]
     ChargeTempLowLevel1,
+    #[error("Charging temperature too low level two alarm")]
     ChargeTempLowLevel2,
+    #[error("Discharging temperature too high level one alarm")]
     DischargeTempHighLevel1,
+    #[error("Discharging temperature too high level two alarm")]
     DischargeTempHighLevel2,
+    #[error("Discharging temperature too low level one alarm")]
     DischargeTempLowLevel1,
+    #[error("Discharging temperature too low level two alarm")]
     DischargeTempLowLevel2,
+    #[error("Charge over current level one alarm")]
     ChargeOvercurrentLevel1,
+    #[error("Charge over current level two alarm")]
     ChargeOvercurrentLevel2,
+    #[error("Discharge over current level one alarm")]
     DischargeOvercurrentLevel1,
+    #[error("Discharge over current level two alarm")]
     DischargeOvercurrentLevel2,
+    #[error("SOC is too high level one alarm")]
     SocHighLevel1,
+    #[error("SOC is too high level two alarm")]
     SocHighLevel2,
+    #[error("SOC is too low level one alarm")]
     SocLowLevel1,
+    #[error("SOC is too low level two alarm")]
     SocLowLevel2,
+    #[error("Excessive differential pressure level one alarm")]
     DiffVoltLevel1,
+    #[error("Excessive differential pressure level two alarm")]
     DiffVoltLevel2,
+    #[error("Excessive temperature difference level one alarm")]
     DiffTempLevel1,
+    #[error("Excessive temperature difference level two alarm")]
     DiffTempLevel2,
+    #[error("Charging MOS overtemperature alarm")]
     ChargeMosTempHighAlarm,
+    #[error("Discharging MOS overtemperature alarm")]
     DischargeMosTempHighAlarm,
+    #[error("Charging MOS temperature detection sensor failure")]
     ChargeMosTempSensorErr,
+    #[error("Disharging MOS temperature detection sensor failure")]
     DischargeMosTempSensorErr,
+    #[error("Charging MOS adhesion failure")]
     ChargeMosAdhesionErr,
+    #[error("Discharging MOS adhesion failure")]
     DischargeMosAdhesionErr,
+    #[error("Charging MOS breaker failure")]
     ChargeMosOpenCircuitErr,
+    #[error("Discharging MOS breaker failure")]
     DischargeMosOpenCircuitErr,
+    #[error("AFE acquisition chip malfunction")]
     AfeCollectChipErr,
+    #[error("monomer collect drop off")]
     VoltageCollectDropped,
+    #[error("Single temperature sensor failure")]
     CellTempSensorErr,
+    #[error("EEPROM storage failures")]
     EepromErr,
+    #[error("RTC clock malfunction")]
     RtcErr,
+    #[error("Precharge failure")]
     PrechangeFailure,
+    #[error("Communication malfunction")]
     CommunicationFailure,
+    #[error("Internal communication module malfunction")]
     InternalCommunicationFailure,
+    #[error("Current module failure")]
     CurrentModuleFault,
+    #[error("Total voltage detection failure")]
     SumVoltageDetectFault,
+    #[error("Short circuit protection failure")]
     ShortCircuitProtectFault,
+    #[error("Low voltage forbidden charging")]
     LowVoltForbiddenChargeFault,
 }
 
@@ -545,97 +592,6 @@ impl ErrorCode {
         ck_and_add!(10, 3, ErrorCode::LowVoltForbiddenChargeFault);
 
         Ok(result)
-    }
-}
-
-impl fmt::Display for ErrorCode {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            ErrorCode::CellVoltHighLevel1 => write!(f, "Cell voltage is too high level one alarm"),
-            ErrorCode::CellVoltHighLevel2 => write!(f, "Cell voltage is too high level two alarm"),
-            ErrorCode::CellVoltLowLevel1 => write!(f, "Cell voltage is too low level one alarm"),
-            ErrorCode::CellVoltLowLevel2 => write!(f, "Cell voltage is too low level two alarm"),
-            ErrorCode::SumVoltHighLevel1 => write!(f, "Total voltage is too high level one alarm"),
-            ErrorCode::SumVoltHighLevel2 => write!(f, "Total voltage is too high level two alarm"),
-            ErrorCode::SumVoltLowLevel1 => write!(f, "Total voltage is too low level one alarm"),
-            ErrorCode::SumVoltLowLevel2 => write!(f, "Total voltage is too low level two alarm"),
-            ErrorCode::ChargeTempHighLevel1 => {
-                write!(f, "Charging temperature too high level one alarm")
-            }
-            ErrorCode::ChargeTempHighLevel2 => {
-                write!(f, "Charging temperature too high level two alarm")
-            }
-            ErrorCode::ChargeTempLowLevel1 => {
-                write!(f, "Charging temperature too low level one alarm")
-            }
-            ErrorCode::ChargeTempLowLevel2 => {
-                write!(f, "Charging temperature too low level two alarm")
-            }
-            ErrorCode::DischargeTempHighLevel1 => {
-                write!(f, "Discharging temperature too high level one alarm")
-            }
-            ErrorCode::DischargeTempHighLevel2 => {
-                write!(f, "Discharging temperature too high level two alarm")
-            }
-            ErrorCode::DischargeTempLowLevel1 => {
-                write!(f, "Discharging temperature too low level one alarm")
-            }
-            ErrorCode::DischargeTempLowLevel2 => {
-                write!(f, "Discharging temperature too low level two alarm")
-            }
-            ErrorCode::ChargeOvercurrentLevel1 => write!(f, "Charge over current level one alarm"),
-            ErrorCode::ChargeOvercurrentLevel2 => write!(f, "Charge over current level two alarm"),
-            ErrorCode::DischargeOvercurrentLevel1 => {
-                write!(f, "Discharge over current level one alarm")
-            }
-            ErrorCode::DischargeOvercurrentLevel2 => {
-                write!(f, "Discharge over current level two alarm")
-            }
-            ErrorCode::SocHighLevel1 => write!(f, "SOC is too high level one alarm"),
-            ErrorCode::SocHighLevel2 => write!(f, "SOC is too high level two alarm"),
-            ErrorCode::SocLowLevel1 => write!(f, "SOC is too low level one alarm"),
-            ErrorCode::SocLowLevel2 => write!(f, "SOC is too low level two alarm"),
-            ErrorCode::DiffVoltLevel1 => {
-                write!(f, "Excessive differential pressure level one alarm")
-            }
-            ErrorCode::DiffVoltLevel2 => {
-                write!(f, "Excessive differential pressure level two alarm")
-            }
-            ErrorCode::DiffTempLevel1 => {
-                write!(f, "Excessive temperature difference level one alarm")
-            }
-            ErrorCode::DiffTempLevel2 => {
-                write!(f, "Excessive temperature difference level two alarm")
-            }
-            ErrorCode::ChargeMosTempHighAlarm => write!(f, "Charging MOS overtemperature alarm"),
-            ErrorCode::DischargeMosTempHighAlarm => {
-                write!(f, "Discharging MOS overtemperature alarm")
-            }
-            ErrorCode::ChargeMosTempSensorErr => {
-                write!(f, "Charging MOS temperature detection sensor failure")
-            }
-            ErrorCode::DischargeMosTempSensorErr => {
-                write!(f, "Disharging MOS temperature detection sensor failure")
-            }
-            ErrorCode::ChargeMosAdhesionErr => write!(f, "Charging MOS adhesion failure"),
-            ErrorCode::DischargeMosAdhesionErr => write!(f, "Discharging MOS adhesion failure"),
-            ErrorCode::ChargeMosOpenCircuitErr => write!(f, "Charging MOS breaker failure"),
-            ErrorCode::DischargeMosOpenCircuitErr => write!(f, "Discharging MOS breaker failure"),
-            ErrorCode::AfeCollectChipErr => write!(f, "AFE acquisition chip malfunction"),
-            ErrorCode::VoltageCollectDropped => write!(f, "monomer collect drop off"),
-            ErrorCode::CellTempSensorErr => write!(f, "Single Temperature Sensor Fault"),
-            ErrorCode::EepromErr => write!(f, "EEPROM storage failures"),
-            ErrorCode::RtcErr => write!(f, "RTC clock malfunction"),
-            ErrorCode::PrechangeFailure => write!(f, "Precharge Failure"),
-            ErrorCode::CommunicationFailure => write!(f, "vehicle communications malfunction"),
-            ErrorCode::InternalCommunicationFailure => {
-                write!(f, "intranet communication module malfunction")
-            }
-            ErrorCode::CurrentModuleFault => write!(f, "Current Module Failure"),
-            ErrorCode::SumVoltageDetectFault => write!(f, "main pressure detection module"),
-            ErrorCode::ShortCircuitProtectFault => write!(f, "Short circuit protection failure"),
-            ErrorCode::LowVoltForbiddenChargeFault => write!(f, "Low Voltage No Charging"),
-        }
     }
 }
 

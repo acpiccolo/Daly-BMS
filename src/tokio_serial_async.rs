@@ -1,8 +1,23 @@
 use crate::protocol::*;
-use anyhow::{bail, Context, Result};
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_serial::{SerialPort, SerialPortBuilderExt};
+
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    #[error("get_status() has to be called at least once before")]
+    StatusError,
+    #[error("Daly error: {0}")]
+    DalyError(#[from] crate::Error),
+    #[error("IO error: {0}")]
+    IOError(#[from] std::io::Error),
+    #[error("Tokio serial error: {0}")]
+    TokioSerial(#[from] tokio_serial::Error),
+    #[error("Tokio timeout elapsed: {0}")]
+    TokioElapsed(#[from] tokio::time::error::Elapsed),
+}
+
+type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug)]
 pub struct DalyBMS {
@@ -21,8 +36,7 @@ impl DalyBMS {
                 .parity(tokio_serial::Parity::None)
                 .stop_bits(tokio_serial::StopBits::One)
                 .flow_control(tokio_serial::FlowControl::None)
-                .open_native_async()
-                .with_context(|| format!("Cannot open serial port '{}'", port))?,
+                .open_native_async()?,
             last_execution: Instant::now(),
             delay: MINIMUM_DELAY,
             io_timeout: Duration::from_secs(5),
@@ -40,33 +54,27 @@ impl DalyBMS {
     async fn send_bytes(&mut self, tx_buffer: &[u8]) -> Result<()> {
         // clear all incoming serial to avoid data collision
         loop {
-            let pending = self
-                .serial
-                .bytes_to_read()
-                .with_context(|| "Cannot read number of pending bytes")?;
+            log::trace!("read to see if there is any pending data");
+            let pending = self.serial.bytes_to_read()?;
+            log::trace!("got {} pending bytes", pending);
             if pending > 0 {
-                log::trace!("Got {} pending bytes", pending);
                 let mut buf: Vec<u8> = vec![0; 64];
-
                 let received =
                     tokio::time::timeout(self.io_timeout, self.serial.read(buf.as_mut_slice()))
-                        .await
-                        .with_context(|| "Cannot read pending bytes")??;
-                log::trace!("Read {} pending bytes", received);
+                        .await??;
+                log::trace!("{} pending bytes consumed", received);
             } else {
                 break;
             }
         }
         self.serial_await_delay().await;
 
-        tokio::time::timeout(self.io_timeout, self.serial.write_all(tx_buffer))
-            .await
-            .with_context(|| "Cannot write to serial")??;
+        log::trace!("write bytes: {:02X?}", tx_buffer);
+        tokio::time::timeout(self.io_timeout, self.serial.write_all(tx_buffer)).await??;
 
         if false {
-            tokio::time::timeout(self.io_timeout, self.serial.flush())
-                .await
-                .with_context(|| "Cannot flush serial connection")??;
+            log::trace!("flush connection");
+            tokio::time::timeout(self.io_timeout, self.serial.flush()).await??;
         }
         Ok(())
     }
@@ -76,9 +84,8 @@ impl DalyBMS {
         let mut rx_buffer = vec![0; size];
 
         // Read bytes from the specified serial interface
-        tokio::time::timeout(self.io_timeout, self.serial.read_exact(&mut rx_buffer))
-            .await
-            .with_context(|| "Cannot receive response")??;
+        log::trace!("read {} bytes", rx_buffer.len());
+        tokio::time::timeout(self.io_timeout, self.serial.read_exact(&mut rx_buffer)).await??;
 
         self.last_execution = Instant::now();
 
@@ -88,12 +95,9 @@ impl DalyBMS {
 
     /// Sets the timeout for I/O operations
     pub fn set_timeout(&mut self, timeout: Duration) -> Result<()> {
-        log::trace!("set timeout: {:?}", timeout);
+        log::trace!("set timeout to {:?}", timeout);
         self.io_timeout = timeout;
         Ok(())
-        // self.serial
-        //     .set_timeout(timeout)
-        //     .map_err(anyhow::Error::from)
     }
 
     /// Delay between multiple commands
@@ -108,15 +112,17 @@ impl DalyBMS {
         } else {
             self.delay = delay;
         }
-        log::trace!("set delay: {:?}", self.delay);
+        log::trace!("set delay to {:?}", self.delay);
     }
 
     pub async fn get_soc(&mut self) -> Result<Soc> {
+        log::trace!("get SOC");
         self.send_bytes(&Soc::request(Address::Host)).await?;
         Ok(Soc::decode(&self.receive_bytes(Soc::reply_size()).await?)?)
     }
 
     pub async fn get_cell_voltage_range(&mut self) -> Result<CellVoltageRange> {
+        log::trace!("get cell voltage range");
         self.send_bytes(&CellVoltageRange::request(Address::Host))
             .await?;
         Ok(CellVoltageRange::decode(
@@ -125,6 +131,7 @@ impl DalyBMS {
     }
 
     pub async fn get_temperature_range(&mut self) -> Result<TemperatureRange> {
+        log::trace!("get temperature range");
         self.send_bytes(&TemperatureRange::request(Address::Host))
             .await?;
         Ok(TemperatureRange::decode(
@@ -133,6 +140,7 @@ impl DalyBMS {
     }
 
     pub async fn get_mosfet_status(&mut self) -> Result<MosfetStatus> {
+        log::trace!("get mosfet status");
         self.send_bytes(&MosfetStatus::request(Address::Host))
             .await?;
         Ok(MosfetStatus::decode(
@@ -141,6 +149,7 @@ impl DalyBMS {
     }
 
     pub async fn get_status(&mut self) -> Result<Status> {
+        log::trace!("get status");
         self.send_bytes(&Status::request(Address::Host)).await?;
         let status = Status::decode(&self.receive_bytes(Status::reply_size()).await?)?;
         self.status = Some(status.clone());
@@ -148,10 +157,11 @@ impl DalyBMS {
     }
 
     pub async fn get_cell_voltages(&mut self) -> Result<Vec<f32>> {
+        log::trace!("get cell voltages");
         let n_cells = if let Some(status) = &self.status {
             status.cells
         } else {
-            bail!("get_status() has to be called at least once before calling get_cell_voltages()");
+            return Err(Error::StatusError);
         };
         self.send_bytes(&CellVoltages::request(Address::Host))
             .await?;
@@ -164,10 +174,11 @@ impl DalyBMS {
     }
 
     pub async fn get_cell_temperatures(&mut self) -> Result<Vec<i32>> {
+        log::trace!("get cell temperatures");
         let n_sensors = if let Some(status) = &self.status {
             status.temperature_sensors
         } else {
-            bail!("get_status() has to be called at least once before calling get_cell_temperatures()");
+            return Err(Error::StatusError);
         };
 
         self.send_bytes(&CellTemperatures::request(Address::Host))
@@ -181,12 +192,11 @@ impl DalyBMS {
     }
 
     pub async fn get_balancing_status(&mut self) -> Result<Vec<bool>> {
+        log::trace!("get balancing status");
         let n_cells = if let Some(status) = &self.status {
             status.cells
         } else {
-            bail!(
-                "get_status() has to be called at least once before calling get_balancing_status()"
-            );
+            return Err(Error::StatusError);
         };
 
         self.send_bytes(&CellBalanceState::request(Address::Host))
@@ -198,6 +208,7 @@ impl DalyBMS {
     }
 
     pub async fn get_errors(&mut self) -> Result<Vec<ErrorCode>> {
+        log::trace!("get errors");
         self.send_bytes(&ErrorCode::request(Address::Host)).await?;
         Ok(ErrorCode::decode(
             &self.receive_bytes(ErrorCode::reply_size()).await?,
@@ -205,6 +216,7 @@ impl DalyBMS {
     }
 
     pub async fn set_discharge_mosfet(&mut self, enable: bool) -> Result<()> {
+        log::trace!("set discharge mosfet to {}", enable);
         self.send_bytes(&SetDischargeMosfet::request(Address::Host, enable))
             .await?;
         Ok(SetDischargeMosfet::decode(
@@ -213,6 +225,7 @@ impl DalyBMS {
     }
 
     pub async fn set_charge_mosfet(&mut self, enable: bool) -> Result<()> {
+        log::trace!("set charge mosfet to {}", enable);
         self.send_bytes(&SetChargeMosfet::request(Address::Host, enable))
             .await?;
         Ok(SetChargeMosfet::decode(
@@ -221,6 +234,7 @@ impl DalyBMS {
     }
 
     pub async fn set_soc(&mut self, soc_percent: f32) -> Result<()> {
+        log::trace!("set SOC to {}", soc_percent);
         self.send_bytes(&SetSoc::request(Address::Host, soc_percent))
             .await?;
         Ok(SetSoc::decode(
@@ -229,6 +243,7 @@ impl DalyBMS {
     }
 
     pub async fn reset(&mut self) -> Result<()> {
+        log::trace!("reset to factory default settings");
         self.send_bytes(&BmsReset::request(Address::Host)).await?;
         Ok(BmsReset::decode(
             &self.receive_bytes(BmsReset::reply_size()).await?,

@@ -1,6 +1,19 @@
 use crate::protocol::*;
-use anyhow::{bail, Context, Result};
 use std::time::{Duration, Instant};
+
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    #[error("get_status() has to be called at least once before")]
+    StatusError,
+    #[error("Daly error: {0}")]
+    DalyError(#[from] crate::Error),
+    #[error("IO error: {0}")]
+    IOError(#[from] std::io::Error),
+    #[error("Tokio serial error: {0}")]
+    Serial(#[from] serialport::Error),
+}
+
+type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug)]
 pub struct DalyBMS {
@@ -18,8 +31,7 @@ impl DalyBMS {
                 .parity(serialport::Parity::None)
                 .stop_bits(serialport::StopBits::One)
                 .flow_control(serialport::FlowControl::None)
-                .open()
-                .with_context(|| format!("Cannot open serial port '{}'", port))?,
+                .open()?,
             last_execution: Instant::now(),
             delay: MINIMUM_DELAY,
             status: None,
@@ -36,32 +48,25 @@ impl DalyBMS {
     fn send_bytes(&mut self, tx_buffer: &[u8]) -> Result<()> {
         // clear all incoming serial to avoid data collision
         loop {
-            let pending = self
-                .serial
-                .bytes_to_read()
-                .with_context(|| "Cannot read number of pending bytes")?;
+            log::trace!("read to see if there is any pending data");
+            let pending = self.serial.bytes_to_read()?;
+            log::trace!("got {} pending bytes", pending);
             if pending > 0 {
-                log::trace!("Got {} pending bytes", pending);
                 let mut buf: Vec<u8> = vec![0; 64];
-                let received = self
-                    .serial
-                    .read(buf.as_mut_slice())
-                    .with_context(|| "Cannot read pending bytes")?;
-                log::trace!("Read {} pending bytes", received);
+                let received = self.serial.read(buf.as_mut_slice())?;
+                log::trace!("{} pending bytes consumed", received);
             } else {
                 break;
             }
         }
         self.serial_await_delay();
 
-        self.serial
-            .write_all(tx_buffer)
-            .with_context(|| "Cannot write to serial")?;
+        log::trace!("write bytes: {:02X?}", tx_buffer);
+        self.serial.write_all(tx_buffer)?;
 
         if false {
-            self.serial
-                .flush()
-                .with_context(|| "Cannot flush serial connection")?;
+            log::trace!("flush connection");
+            self.serial.flush()?;
         }
         Ok(())
     }
@@ -71,22 +76,19 @@ impl DalyBMS {
         let mut rx_buffer = vec![0; size];
 
         // Read bytes from the specified serial interface
-        self.serial
-            .read_exact(&mut rx_buffer)
-            .with_context(|| "Cannot receive response")?;
+        log::trace!("read {} bytes", rx_buffer.len());
+        self.serial.read_exact(&mut rx_buffer)?;
 
         self.last_execution = Instant::now();
 
-        log::trace!("receive_bytes: {:02X?}", rx_buffer);
+        log::trace!("receive bytes: {:02X?}", rx_buffer);
         Ok(rx_buffer)
     }
 
     /// Sets the timeout for I/O operations
     pub fn set_timeout(&mut self, timeout: Duration) -> Result<()> {
-        log::trace!("set timeout: {:?}", timeout);
-        self.serial
-            .set_timeout(timeout)
-            .map_err(anyhow::Error::from)
+        log::trace!("set timeout to {:?}", timeout);
+        self.serial.set_timeout(timeout).map_err(Error::from)
     }
 
     /// Delay between multiple commands
@@ -101,15 +103,17 @@ impl DalyBMS {
         } else {
             self.delay = delay;
         }
-        log::trace!("set delay: {:?}", self.delay);
+        log::trace!("set delay to {:?}", self.delay);
     }
 
     pub fn get_soc(&mut self) -> Result<Soc> {
+        log::trace!("get SOC");
         self.send_bytes(&Soc::request(Address::Host))?;
         Ok(Soc::decode(&self.receive_bytes(Soc::reply_size())?)?)
     }
 
     pub fn get_cell_voltage_range(&mut self) -> Result<CellVoltageRange> {
+        log::trace!("get cell voltage range");
         self.send_bytes(&CellVoltageRange::request(Address::Host))?;
         Ok(CellVoltageRange::decode(
             &self.receive_bytes(CellVoltageRange::reply_size())?,
@@ -117,6 +121,7 @@ impl DalyBMS {
     }
 
     pub fn get_temperature_range(&mut self) -> Result<TemperatureRange> {
+        log::trace!("get temperature range");
         self.send_bytes(&TemperatureRange::request(Address::Host))?;
         Ok(TemperatureRange::decode(
             &self.receive_bytes(TemperatureRange::reply_size())?,
@@ -124,6 +129,7 @@ impl DalyBMS {
     }
 
     pub fn get_mosfet_status(&mut self) -> Result<MosfetStatus> {
+        log::trace!("get mosfet status");
         self.send_bytes(&MosfetStatus::request(Address::Host))?;
         Ok(MosfetStatus::decode(
             &self.receive_bytes(MosfetStatus::reply_size())?,
@@ -131,6 +137,7 @@ impl DalyBMS {
     }
 
     pub fn get_status(&mut self) -> Result<Status> {
+        log::trace!("get status");
         self.send_bytes(&Status::request(Address::Host))?;
         let status = Status::decode(&self.receive_bytes(Status::reply_size())?)?;
         self.status = Some(status.clone());
@@ -138,10 +145,11 @@ impl DalyBMS {
     }
 
     pub fn get_cell_voltages(&mut self) -> Result<Vec<f32>> {
+        log::trace!("get cell voltages");
         let n_cells = if let Some(status) = &self.status {
             status.cells
         } else {
-            bail!("get_status() has to be called at least once before calling get_cell_voltages()");
+            return Err(Error::StatusError);
         };
         self.send_bytes(&CellVoltages::request(Address::Host))?;
         Ok(CellVoltages::decode(
@@ -151,10 +159,11 @@ impl DalyBMS {
     }
 
     pub fn get_cell_temperatures(&mut self) -> Result<Vec<i32>> {
+        log::trace!("get cell temperatures");
         let n_sensors = if let Some(status) = &self.status {
             status.temperature_sensors
         } else {
-            bail!("get_status() has to be called at least once before calling get_cell_temperatures()");
+            return Err(Error::StatusError);
         };
 
         self.send_bytes(&CellTemperatures::request(Address::Host))?;
@@ -165,12 +174,11 @@ impl DalyBMS {
     }
 
     pub fn get_balancing_status(&mut self) -> Result<Vec<bool>> {
+        log::trace!("get balancing status");
         let n_cells = if let Some(status) = &self.status {
             status.cells
         } else {
-            bail!(
-                "get_status() has to be called at least once before calling get_balancing_status()"
-            );
+            return Err(Error::StatusError);
         };
 
         self.send_bytes(&CellBalanceState::request(Address::Host))?;
@@ -181,6 +189,7 @@ impl DalyBMS {
     }
 
     pub fn get_errors(&mut self) -> Result<Vec<ErrorCode>> {
+        log::trace!("get errors");
         self.send_bytes(&ErrorCode::request(Address::Host))?;
         Ok(ErrorCode::decode(
             &self.receive_bytes(ErrorCode::reply_size())?,
@@ -188,6 +197,7 @@ impl DalyBMS {
     }
 
     pub fn set_discharge_mosfet(&mut self, enable: bool) -> Result<()> {
+        log::trace!("set discharge mosfet to {}", enable);
         self.send_bytes(&SetDischargeMosfet::request(Address::Host, enable))?;
         Ok(SetDischargeMosfet::decode(
             &self.receive_bytes(SetDischargeMosfet::reply_size())?,
@@ -195,6 +205,7 @@ impl DalyBMS {
     }
 
     pub fn set_charge_mosfet(&mut self, enable: bool) -> Result<()> {
+        log::trace!("set charge mosfet to {}", enable);
         self.send_bytes(&SetChargeMosfet::request(Address::Host, enable))?;
         Ok(SetChargeMosfet::decode(
             &self.receive_bytes(SetChargeMosfet::reply_size())?,
@@ -202,11 +213,13 @@ impl DalyBMS {
     }
 
     pub fn set_soc(&mut self, soc_percent: f32) -> Result<()> {
+        log::trace!("set SOC to {}", soc_percent);
         self.send_bytes(&SetSoc::request(Address::Host, soc_percent))?;
         Ok(SetSoc::decode(&self.receive_bytes(SetSoc::reply_size())?)?)
     }
 
     pub fn reset(&mut self) -> Result<()> {
+        log::trace!("reset to factory default settings");
         self.send_bytes(&BmsReset::request(Address::Host))?;
         Ok(BmsReset::decode(
             &self.receive_bytes(BmsReset::reply_size())?,

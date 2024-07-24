@@ -197,7 +197,8 @@ fn main() -> Result<()> {
 
     let _log_handle = logging_init(args.verbose.log_level_filter());
 
-    let mut bms = dalybms_lib::serialport::DalyBMS::new(&args.device)?;
+    let mut bms = dalybms_lib::serialport::DalyBMS::new(&args.device)
+        .with_context(|| format!("Cannot open serial port '{}'", args.device))?;
     bms.set_timeout(args.timeout)?;
     bms.set_delay(args.delay);
 
