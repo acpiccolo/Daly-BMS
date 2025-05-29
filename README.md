@@ -16,10 +16,144 @@ This RUST project can read and write a Daly BMS module from the command line.
    the binary to `target/release/dalybms`.
 
 ## Getting started
-To see all available commands:
-```
+
+The `dalybms` command-line tool allows you to interact with your Daly BMS from the terminal.
+
+### Basic Help
+
+To see all available commands and options:
+```bash
 dalybms --help
 ```
+
+To get help for a specific subcommand, for example `set-soc`:
+```bash
+dalybms set-soc --help
+```
+
+### CLI Examples
+
+Here are some examples of how to use the `dalybms` tool. Replace `/dev/ttyUSB0` with the actual serial port your BMS is connected to, if different.
+
+**1. Fetching Basic Information**
+
+*   Get State of Charge (SOC), total voltage, and current:
+    ```bash
+    dalybms --device /dev/ttyUSB0 soc
+    ```
+    (Output will be similar to: `SOC: Soc { total_voltage: 53.6, current: -0.0, soc_percent: 87.5 }`)
+
+*   Get general status information (number of cells, temperature sensors, charger/load status, cycles):
+    ```bash
+    dalybms status
+    ```
+    (Assumes default device or you can specify `--device`)
+
+*   Get MOSFET status (mode, charging/discharging MOSFET state, BMS cycles, capacity):
+    ```bash
+    dalybms mosfet
+    ```
+
+*   Get cell voltage range (highest/lowest cell voltage and which cell):
+    ```bash
+    dalybms voltage-range
+    ```
+
+*   Get temperature range (highest/lowest temperature and which sensor):
+    ```bash
+    dalybms temperature-range
+    ```
+
+*   Get current error codes:
+    ```bash
+    dalybms errors
+    ```
+    (Output will be like: `Errors: []` if no errors, or show a list of active errors)
+
+**2. Fetching Detailed Information**
+
+*Important*: For commands like `cell-voltages`, `cell-temperatures`, and `balancing`, the BMS needs to know the number of cells/sensors. The `dalybms` tool automatically calls `status` first if you haven't, but it's good practice to be aware of this.
+
+*   Get individual cell voltages:
+    ```bash
+    dalybms cell-voltages
+    ```
+
+*   Get individual cell/temperature sensor readings:
+    ```bash
+    dalybms cell-temperatures
+    ```
+
+*   Get cell balancing status (shows which cells are currently being balanced):
+    ```bash
+    dalybms balancing
+    ```
+
+**3. Setting Values and Controlling MOSFETs**
+
+*   Set the State of Charge (SOC) to 80.5%:
+    ```bash
+    dalybms set-soc --soc-percent 80.5
+    ```
+    Note: The command in `src/main.rs` is `SetSoc { soc_percent: f32 }`, so the CLI argument is just the value. The help command `dalybms set-soc --help` confirms this.
+
+*   Enable the discharge MOSFET:
+    ```bash
+    dalybms set-discharge-mosfet --enable
+    ```
+
+*   Disable the discharge MOSFET:
+    ```bash
+    dalybms set-discharge-mosfet
+    ```
+    (Omitting `--enable` implies `--enable false` if the flag is an action, but `clap` by default for simple flags might require `--enable false`. Let's assume it defaults to false if not present, or the help would clarify. The `src/main.rs` uses `#[clap(long, short, action)]` which means presence implies true, absence implies false for `enable`.)
+    *Correction*: `#[clap(long, short, action)]` for a boolean flag means its presence sets it to true. To explicitly set it to false, you'd typically use `--enable=false` or rely on the default if the action implies a toggle or if there's a `--disable` counterpart. For this CLI, `action` means it's a store true flag, so its absence means false. So, `dalybms set-discharge-mosfet` (without `--enable`) should disable it.
+
+*   Enable the charge MOSFET:
+    ```bash
+    dalybms set-charge-mosfet --enable
+    ```
+
+*   Disable the charge MOSFET:
+    ```bash
+    dalybms set-charge-mosfet 
+    ```
+    (Same logic as `set-discharge-mosfet` applies)
+
+**4. Fetching All Information**
+
+*   Get all available information from the BMS (runs most of the read commands sequentially):
+    ```bash
+    dalybms all
+    ```
+    (This is very useful for a quick overview.)
+
+**5. Specifying Connection Parameters**
+
+*   Use a different serial device:
+    ```bash
+    dalybms --device /dev/ttyACM0 status
+    ```
+
+*   Change the communication timeout (e.g., to 1 second):
+    ```bash
+    dalybms --timeout 1s soc
+    ```
+
+*   Change the delay between commands (e.g., to 100 milliseconds):
+    ```bash
+    dalybms --delay 100ms all
+    ```
+    (Useful if you experience communication issues with the default delay.)
+
+**6. Resetting the BMS**
+
+*   Reset the BMS to factory defaults (Use with extreme caution!):
+    ```bash
+    dalybms reset
+    ```
+
+These examples should help you get started with using the `dalybms` command-line tool. Always refer to `dalybms --help` and `dalybms <subcommand> --help` for the most up-to-date options and parameters.
 
 ## Library Usage
 
