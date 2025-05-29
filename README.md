@@ -16,18 +16,257 @@ This RUST project can read and write a Daly BMS module from the command line.
    the binary to `target/release/dalybms`.
 
 ## Getting started
-To see all available commands:
-```
+
+The `dalybms` command-line tool allows you to interact with your Daly BMS from the terminal.
+
+### Basic Help
+
+To see all available commands and options:
+```bash
 dalybms --help
 ```
 
-### Cargo Features
-| Feature | Purpose | Default |
-| :--- | :------ | :-----: |
-| `serialport` | Enable the implementation for the synchronous serialport client | - |
-| `tokio-serial-async` | Enable the implementation for the tokio serial asynchronous client | - |
-| `bin-dependencies` | Enable all features required by the binary | ✅ |
+To get help for a specific subcommand, for example `set-soc`:
+```bash
+dalybms set-soc --help
+```
 
+### CLI Examples
+
+Here are some examples of how to use the `dalybms` tool. Replace `/dev/ttyUSB0` with the actual serial port your BMS is connected to, if different.
+
+**1. Fetching Basic Information**
+
+*   Get State of Charge (SOC), total voltage, and current:
+    ```bash
+    dalybms --device /dev/ttyUSB0 soc
+    ```
+    (Output will be similar to: `SOC: Soc { total_voltage: 53.6, current: -0.0, soc_percent: 87.5 }`)
+
+*   Get general status information (number of cells, temperature sensors, charger/load status, cycles):
+    ```bash
+    dalybms status
+    ```
+    (Assumes default device or you can specify `--device`)
+
+*   Get MOSFET status (mode, charging/discharging MOSFET state, BMS cycles, capacity):
+    ```bash
+    dalybms mosfet
+    ```
+
+*   Get cell voltage range (highest/lowest cell voltage and which cell):
+    ```bash
+    dalybms voltage-range
+    ```
+
+*   Get temperature range (highest/lowest temperature and which sensor):
+    ```bash
+    dalybms temperature-range
+    ```
+
+*   Get current error codes:
+    ```bash
+    dalybms errors
+    ```
+    (Output will be like: `Errors: []` if no errors, or show a list of active errors)
+
+**2. Fetching Detailed Information**
+
+*Important*: For commands like `cell-voltages`, `cell-temperatures`, and `balancing`, the BMS needs to know the number of cells/sensors. The `dalybms` tool automatically calls `status` first if you haven't, but it's good practice to be aware of this.
+
+*   Get individual cell voltages:
+    ```bash
+    dalybms cell-voltages
+    ```
+
+*   Get individual cell/temperature sensor readings:
+    ```bash
+    dalybms cell-temperatures
+    ```
+
+*   Get cell balancing status (shows which cells are currently being balanced):
+    ```bash
+    dalybms balancing
+    ```
+
+**3. Setting Values and Controlling MOSFETs**
+
+*   Set the State of Charge (SOC) to 80.5%:
+    ```bash
+    dalybms set-soc 80.5
+    ```
+
+*   Enable the discharge MOSFET:
+    ```bash
+    dalybms set-discharge-mosfet --enable
+    ```
+
+*   Disable the discharge MOSFET:
+    ```bash
+    dalybms set-discharge-mosfet
+    ```
+
+*   Enable the charge MOSFET:
+    ```bash
+    dalybms set-charge-mosfet --enable
+    ```
+
+*   Disable the charge MOSFET:
+    ```bash
+    dalybms set-charge-mosfet 
+    ```
+
+**4. Fetching All Information**
+
+*   Get all available information from the BMS (runs most of the read commands sequentially):
+    ```bash
+    dalybms all
+    ```
+    (This is very useful for a quick overview.)
+
+**5. Specifying Connection Parameters**
+
+*   Use a different serial device:
+    ```bash
+    dalybms --device /dev/ttyACM0 status
+    ```
+
+*   Change the communication timeout (e.g., to 1 second):
+    ```bash
+    dalybms --timeout 1s soc
+    ```
+
+*   Change the delay between commands (e.g., to 100 milliseconds):
+    ```bash
+    dalybms --delay 100ms all
+    ```
+    (Useful if you experience communication issues with the default delay.)
+
+**6. Resetting the BMS**
+
+*   Reset the BMS to factory defaults (Use with extreme caution!):
+    ```bash
+    dalybms reset
+    ```
+
+These examples should help you get started with using the `dalybms` command-line tool. Always refer to `dalybms --help` and `dalybms <subcommand> --help` for the most up-to-date options and parameters.
+
+## Library Usage
+
+This crate can also be used as a library (`dalybms_lib`) to interact with Daly BMS programmatically from your own Rust projects.
+
+### Adding as a Dependency
+
+To use `dalybms_lib`, add it to your `Cargo.toml`. Replace `"x.y.z"` with the desired version of `dalybms_lib`:
+
+```toml
+[dependencies]
+# For the synchronous client:
+dalybms_lib = { version = "x.y.z", features = ["serialport"] }
+
+# For the asynchronous client:
+# dalybms_lib = { version = "x.y.z", features = ["tokio-serial-async"] }
+
+# For both clients:
+# dalybms_lib = { version = "x.y.z", features = ["serialport", "tokio-serial-async"] }
+```
+
+You need to specify which client(s) you intend to use via feature flags:
+- `serialport`: For the synchronous client.
+- `tokio-serial-async`: For the asynchronous Tokio-based client.
+
+You can enable both if needed: `features = ["serialport", "tokio-serial-async"]`
+
+### Synchronous Client Example
+
+The synchronous client uses the `serialport` crate.
+
+**Feature flag required**: `serialport`
+
+```rust
+use dalybms_lib::serialport::DalyBMS;
+use std::time::Duration;
+
+fn main() {
+    match DalyBMS::new("/dev/ttyUSB0") { // Replace with your serial port
+        Ok(mut bms) => {
+            bms.set_timeout(Duration::from_millis(500)).unwrap_or_else(|e| {
+                eprintln!("Error setting timeout: {:?}", e);
+            });
+
+            match bms.get_soc() {
+                Ok(soc) => {
+                    println!("SOC: {:.1}%, Voltage: {:.1}V, Current: {:.1}A",
+                             soc.soc_percent, soc.total_voltage, soc.current);
+                }
+                Err(e) => {
+                    eprintln!("Error getting SOC: {:?}", e);
+                }
+            }
+        }
+        Err(e) => {
+            eprintln!("Failed to connect to BMS: {:?}", e);
+        }
+    }
+}
+```
+
+### Asynchronous Client Example
+
+The asynchronous client uses `tokio` and `tokio-serial`.
+
+**Feature flag required**: `tokio-serial-async`
+
+```rust
+use dalybms_lib::tokio_serial_async::DalyBMS;
+use std::time::Duration;
+
+#[tokio::main]
+async fn main() {
+    match DalyBMS::new("/dev/ttyUSB0") { // Replace with your serial port
+        Ok(mut bms) => {
+            bms.set_timeout(Duration::from_millis(500)).unwrap_or_else(|e| {
+                 // In async, set_timeout is sync, so direct error handling is fine
+                eprintln!("Error setting timeout: {:?}", e);
+            });
+
+            match bms.get_soc().await {
+                Ok(soc) => {
+                    println!("SOC: {:.1}%, Voltage: {:.1}V, Current: {:.1}A",
+                             soc.soc_percent, soc.total_voltage, soc.current);
+                }
+                Err(e) => {
+                    eprintln!("Error getting SOC: {:?}", e);
+                }
+            }
+        }
+        Err(e) => {
+            eprintln!("Failed to connect to BMS: {:?}", e);
+        }
+    }
+}
+```
+
+### Cargo Features
+
+This crate (`dalybms_lib`) uses feature flags to manage optional dependencies and client implementations. This allows users to compile only the parts they need.
+
+| Feature              | Purpose                                                                 | Client Enabled     | Default |
+| :------------------- | :---------------------------------------------------------------------- | :----------------- | :-----: |
+| `serialport`         | Enables the **synchronous** client using the `serialport` crate.        | Synchronous        | No      |
+| `tokio-serial-async` | Enables the **asynchronous** client using `tokio` and `tokio-serial`. | Asynchronous       | No      |
+| `serde`              | Enables `serde` support for serializing/deserializing data structures.  | Both (if enabled)  | No      |
+| `bin-dependencies`   | Enables all features required by the `dalybms` binary executable.       | `serialport`       | Yes (for `dalybms` binary target) |
+
+**Notes on Features:**
+- When using `dalybms_lib` as a library, you should explicitly enable `serialport` and/or `tokio-serial-async` depending on your needs.
+- The `serde` feature can be combined with either client feature if you need serialization capabilities (e.g., `features = ["serialport", "serde"]`).
+- The `default` feature for the `dalybms` *crate as a whole* is `bin-dependencies`. However, for `dalybms_lib` when used as a dependency, no client features are enabled by default.
+- The `bin-dependencies` feature enables `serialport` because the `dalybms` command-line tool currently uses the synchronous client.
+
+## Protocol Details
+
+For those interested in the low-level communication details, the Daly BMS UART/RS485 communication protocol specification (version 1.2) is available in the repository at `docs/Daly UART_485 Communications Protocol V1.2.pdf`.
 
 ## License
 Licensed under either of

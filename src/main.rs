@@ -15,39 +15,44 @@ fn default_device_name() -> String {
 
 #[derive(Subcommand, Debug, Clone, PartialEq)]
 pub enum CliCommands {
-    /// Show status
+    /// Show general BMS status: cell count, temperature sensors, charger/load status, cycles
     Status,
-    /// Show voltage, current, SOC
+    /// Show total voltage, current, and State of Charge (SOC)
     Soc,
-    /// Show mosfet status
+    /// Show MOSFET status: mode, charge/discharge state, capacity, and BMS cycles
     Mosfet,
-    /// Show voltage range
+    /// Show highest/lowest cell voltage and corresponding cell number
     VoltageRange,
-    /// Show temperature range
+    /// Show highest/lowest temperature and corresponding sensor number
     TemperatureRange,
-    /// Show cell voltages
+    /// Show individual cell voltages (requires BMS status to be fetched first or will fetch it)
     CellVoltages,
-    /// Show temperature sensor values
+    /// Show individual temperature sensor readings (requires BMS status to be fetched first or will fetch it)
     CellTemperatures,
-    /// Show cell balancing status
+    /// Show cell balancing status (requires BMS status to be fetched first or will fetch it)
     Balancing,
-    /// Show BMS errors
+    /// Show current BMS error codes
     Errors,
-    /// Show all
+    /// Show all available BMS information by running most read commands
     All,
-    /// Set SOC in percent from '0.0' to '100.0'
-    SetSoc { soc_percent: f32 },
-    /// Enable or disable discharge mosfet
+    /// Set State of Charge (SOC) in percent
+    SetSoc {
+        /// The desired SOC value as a percentage (e.g., 75.5 for 75.5%)
+        soc_percent: f32,
+    },
+    /// Enable or disable the discharge MOSFET
     SetDischargeMosfet {
+        /// Enable the discharge MOSFET. If this flag is not present, it will be disabled.
         #[clap(long, short, action)]
         enable: bool,
     },
-    /// Enable or disable charge mosfet
+    /// Enable or disable the charge MOSFET
     SetChargeMosfet {
+        /// Enable the charge MOSFET. If this flag is not present, it will be disabled.
         #[clap(long, short, action)]
         enable: bool,
     },
-    /// Reset the BMS
+    /// Reset the BMS to factory settings (Use with caution!)
     Reset,
 }
 
@@ -61,19 +66,20 @@ struct CliArgs {
     #[command(flatten)]
     verbose: Verbosity<InfoLevel>,
 
-    /// Device
+    /// Serial port device path (e.g., /dev/ttyUSB0 on Linux, COM1 on Windows)
     #[arg(short, long, default_value_t = default_device_name())]
     device: String,
 
     #[command(subcommand)]
     command: CliCommands,
 
-    /// Serial Input/Output operations timeout
+    /// Timeout for serial I/O operations (e.g., "500ms", "1s", "2s 500ms")
     #[arg(value_parser = humantime::parse_duration, long, default_value = "500ms")]
     timeout: Duration,
 
     // Some USB - RS485 dongles requires at least 10ms to switch between TX and RX, so use a save delay between frames
-    /// Delay between multiple commands
+    /// Delay between sending multiple commands to the BMS (e.g., "50ms", "100ms")
+    /// (useful for some serial adapters that need time to switch between TX/RX)
     #[arg(value_parser = humantime::parse_duration, long, default_value = "50ms")]
     delay: Duration,
 }
