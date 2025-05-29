@@ -1,5 +1,5 @@
 /// Represents the possible errors that can occur in the `dalybms_lib`.
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, thiserror::Error, PartialEq)]
 pub enum Error {
     /// Error indicating an invalid checksum in the received data.
     #[error("Invalid checksum")]

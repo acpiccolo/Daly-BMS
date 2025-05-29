@@ -67,8 +67,8 @@ type Result<T> = std::result::Result<T, Error>;
 pub struct DalyBMS {
     serial: tokio_serial::SerialStream,
     last_execution: Instant,
-    io_timeout: Duration, // Timeout for individual I/O operations
-    delay: Duration,      // Delay between commands
+    io_timeout: Duration,   // Timeout for individual I/O operations
+    delay: Duration,        // Delay between commands
     status: Option<Status>, // Stores the latest status
 }
 
@@ -150,7 +150,8 @@ impl DalyBMS {
         tokio::time::timeout(self.io_timeout, self.serial.write_all(tx_buffer)).await??;
 
         // Flushing is usually not necessary and can sometimes cause issues.
-        if false { // Disabled by default
+        if false {
+            // Disabled by default
             log::trace!("flush connection");
             tokio::time::timeout(self.io_timeout, self.serial.flush()).await??;
         }
@@ -425,8 +426,7 @@ impl DalyBMS {
     ///
     /// # Arguments
     ///
-    /// * `soc_percent`: The desired SOC percentage (0.0 to 100.0).
-    ///                  Values outside this range will be clamped by the protocol.
+    /// * `soc_percent`: The desired SOC percentage (0.0 to 100.0). Values outside this range will be clamped by the protocol.
     ///
     /// # Returns
     ///

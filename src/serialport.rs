@@ -138,7 +138,8 @@ impl DalyBMS {
 
         // Flushing is usually not necessary for USB serial devices and can sometimes cause issues.
         // If needed, it can be enabled here.
-        if false { // Disabled by default
+        if false {
+            // Disabled by default
             log::trace!("flush connection");
             self.serial.flush()?;
         }
@@ -398,8 +399,7 @@ impl DalyBMS {
     ///
     /// # Arguments
     ///
-    /// * `soc_percent`: The desired SOC percentage (0.0 to 100.0).
-    ///                  Values outside this range will be clamped by the protocol.
+    /// * `soc_percent`: The desired SOC percentage (0.0 to 100.0). Values outside this range will be clamped by the protocol.
     ///
     /// # Returns
     ///

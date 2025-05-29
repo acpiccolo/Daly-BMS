@@ -141,538 +141,6 @@ impl Soc {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    // Helper function to calculate checksum for test data
-    fn calculate_test_checksum(data: &[u8]) -> u8 {
-        let mut checksum: u8 = 0;
-        for byte in data.iter().take(data.len() -1) {
-            checksum = checksum.wrapping_add(*byte);
-        }
-        checksum
-    }
-
-    #[test]
-    fn test_calc_crc_valid() {
-        let data1: [u8; 13] = [0xA5, 0x40, 0x90, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]; // Placeholder CRC
-        let expected_crc1 = calculate_test_checksum(&data1);
-        assert_eq!(calc_crc(&data1), expected_crc1);
-
-        let data2: [u8; 13] = [0xA5, 0x40, 0x90, 0x08, 0xDE, 0xAD, 0xBE, 0xEF, 0xCA, 0xFE, 0xBA, 0xBE, 0x00]; // Placeholder CRC
-        let expected_crc2 = calculate_test_checksum(&data2);
-        assert_eq!(calc_crc(&data2), expected_crc2);
-        
-        let data3: [u8; 13] = [0xA5, 0x01, 0x02, 0x08, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x00];
-        let expected_crc3 = calculate_test_checksum(&data3);
-        assert_eq!(calc_crc(&data3), expected_crc3);
-    }
-
-    #[test]
-    fn test_validate_checksum_valid() {
-        let mut data: [u8; 13] = [0xA5, 0x40, 0x90, 0x08, 0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF, 0x00];
-        data[12] = calc_crc(&data); // Set correct CRC
-        assert!(validate_checksum(&data).is_ok());
-    }
-
-    #[test]
-    fn test_validate_checksum_invalid() {
-        let mut data: [u8; 13] = [0xA5, 0x40, 0x90, 0x08, 0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF, 0x00];
-        data[12] = calc_crc(&data).wrapping_add(1); // Set incorrect CRC
-        let result = validate_checksum(&data);
-        assert!(result.is_err());
-        match result.err().unwrap() {
-            Error::CheckSumError => {} // Expected error
-            _ => panic!("Unexpected error type"),
-        }
-    }
-
-    #[test]
-    fn test_status_decode_valid() {
-        // cells = 16 (0x10), temp_sensors = 4 (0x04), charger_running = true (0x01), load_running = false (0x00)
-        // states (rx_buffer[8]): DI1=true, DI2=false, DI3=true, DI4=false, DO1=false, DO2=true, DO3=false, DO4=true => 0b10101010 = 0xAA
-        // cycles = 1234 (0x04D2)
-        // CRC: 0xA5+0x40+0x94+0x08+0x10+0x04+0x01+0x00+0xAA+0x04+0xD2+0x00 = 790 = 0x0316 => 0x16
-        let bytes: [u8; 13] = [0xA5, 0x40, 0x94, 0x08, 0x10, 0x04, 0x01, 0x00, 0xAA, 0x04, 0xD2, 0x00, 0x16];
-        let expected_status = Status {
-            cells: 16,
-            temperature_sensors: 4,
-            charger_running: true,
-            load_running: false,
-            states: IOState {
-                di1: true,  // bit 0 of 0xAA
-                di2: false, // bit 1 of 0xAA
-                di3: true,  // bit 2 of 0xAA
-                di4: false, // bit 3 of 0xAA
-                do1: false, // bit 4 of 0xAA
-                do2: true,  // bit 5 of 0xAA
-                do3: false, // bit 6 of 0xAA
-                do4: true,  // bit 7 of 0xAA
-            },
-            cycles: 1234,
-        };
-        match Status::decode(&bytes) {
-            Ok(decoded) => {
-                assert_eq!(decoded.cells, expected_status.cells);
-                assert_eq!(decoded.temperature_sensors, expected_status.temperature_sensors);
-                assert_eq!(decoded.charger_running, expected_status.charger_running);
-                assert_eq!(decoded.load_running, expected_status.load_running);
-                assert_eq!(decoded.states.di1, expected_status.states.di1);
-                assert_eq!(decoded.states.di2, expected_status.states.di2);
-                assert_eq!(decoded.states.di3, expected_status.states.di3);
-                assert_eq!(decoded.states.di4, expected_status.states.di4);
-                assert_eq!(decoded.states.do1, expected_status.states.do1);
-                assert_eq!(decoded.states.do2, expected_status.states.do2);
-                assert_eq!(decoded.states.do3, expected_status.states.do3);
-                assert_eq!(decoded.states.do4, expected_status.states.do4);
-                assert_eq!(decoded.cycles, expected_status.cycles);
-            }
-            Err(e) => panic!("Decoding failed: {:?}", e),
-        }
-    }
-
-    #[test]
-    fn test_mosfet_status_decode_valid() {
-        // mode = Charging (1), charging_mosfet = true (1), discharging_mosfet = false (0), bms_cycles = 150 (0x96), capacity_ah = 50.123Ah (50123 -> 0x0000C3CB)
-        // CRC: 0xA5+0x40+0x93+0x08+0x01+0x01+0x00+0x96+0x00+0x00+0xC3+0xCB = 934 = 0x03A6 => 0xA6
-        let bytes: [u8; 13] = [0xA5, 0x40, 0x93, 0x08, 0x01, 0x01, 0x00, 0x96, 0x00, 0x00, 0xC3, 0xCB, 0xA6];
-        let expected_status = MosfetStatus {
-            mode: MosfetMode::Charging,
-            charging_mosfet: true,
-            discharging_mosfet: false,
-            bms_cycles: 150,
-            capacity_ah: 50.123,
-        };
-        match MosfetStatus::decode(&bytes) {
-            Ok(decoded) => {
-                assert!(matches!(decoded.mode, MosfetMode::Charging));
-                assert_eq!(decoded.charging_mosfet, expected_status.charging_mosfet);
-                assert_eq!(decoded.discharging_mosfet, expected_status.discharging_mosfet);
-                assert_eq!(decoded.bms_cycles, expected_status.bms_cycles);
-                assert!((decoded.capacity_ah - expected_status.capacity_ah).abs() < f32::EPSILON);
-            }
-            Err(e) => panic!("Decoding failed: {:?}", e),
-        }
-    }
-
-    #[test]
-    fn test_temperature_range_decode_valid() {
-        // highest_temperature = 25C (0x41 with 40 offset), highest_sensor = 1, lowest_temperature = 10C (0x32 with 40 offset), lowest_sensor = 2
-        // CRC: 0xA5+0x40+0x92+0x08+0x41+0x01+0x32+0x02+0x00+0x00+0x00+0x00 = 501 = 0x01F5 => 0xF5
-        let bytes: [u8; 13] = [0xA5, 0x40, 0x92, 0x08, 0x41, 0x01, 0x32, 0x02, 0x00, 0x00, 0x00, 0x00, 0xF5];
-        let expected_range = TemperatureRange {
-            highest_temperature: 25,
-            highest_sensor: 1,
-            lowest_temperature: 10,
-            lowest_sensor: 2,
-        };
-        match TemperatureRange::decode(&bytes) {
-            Ok(decoded) => {
-                assert_eq!(decoded.highest_temperature, expected_range.highest_temperature);
-                assert_eq!(decoded.highest_sensor, expected_range.highest_sensor);
-                assert_eq!(decoded.lowest_temperature, expected_range.lowest_temperature);
-                assert_eq!(decoded.lowest_sensor, expected_range.lowest_sensor);
-            }
-            Err(e) => panic!("Decoding failed: {:?}", e),
-        }
-    }
-
-    #[test]
-    fn test_cell_voltage_range_decode_valid() {
-        // highest_voltage = 3.456V (0x0D80), highest_cell = 1, lowest_voltage = 3.123V (0x0C33), lowest_cell = 5
-        // CRC: 0xA5+0x40+0x91+0x08+0x0D+0x80+0x01+0x0C+0x33+0x05+0x00+0x00 = 592 = 0x0250 => 0x50
-        let bytes: [u8; 13] = [0xA5, 0x40, 0x91, 0x08, 0x0D, 0x80, 0x01, 0x0C, 0x33, 0x05, 0x00, 0x00, 0x50];
-        let expected_range = CellVoltageRange {
-            highest_voltage: 3.456,
-            highest_cell: 1,
-            lowest_voltage: 3.123,
-            lowest_cell: 5,
-        };
-        match CellVoltageRange::decode(&bytes) {
-            Ok(decoded) => {
-                assert!((decoded.highest_voltage - expected_range.highest_voltage).abs() < f32::EPSILON);
-                assert_eq!(decoded.highest_cell, expected_range.highest_cell);
-                assert!((decoded.lowest_voltage - expected_range.lowest_voltage).abs() < f32::EPSILON);
-                assert_eq!(decoded.lowest_cell, expected_range.lowest_cell);
-            }
-            Err(e) => panic!("Decoding failed: {:?}", e),
-        }
-    }
-
-    #[test]
-    fn test_validate_len_valid() {
-        let data: [u8; 13] = [0; 13];
-        assert!(validate_len(&data, 13).is_ok());
-    }
-    
-    #[test]
-    fn test_validate_len_valid_larger_buffer() {
-        let data: [u8; 15] = [0; 15]; // Buffer is larger than required size
-        assert!(validate_len(&data, 13).is_ok());
-    }
-
-    #[test]
-    fn test_validate_len_invalid() {
-        let data: [u8; 12] = [0; 12];
-        let result = validate_len(&data, 13);
-        assert!(result.is_err());
-        match result.err().unwrap() {
-            Error::ReplySizeError => {} // Expected error
-            _ => panic!("Unexpected error type"),
-        }
-    }
-
-    #[test]
-    fn test_validate_len_empty() {
-        let data: [u8; 0] = [];
-        let result = validate_len(&data, 13);
-        assert!(result.is_err());
-        match result.err().unwrap() {
-            Error::ReplySizeError => {} // Expected error
-            _ => panic!("Unexpected error type"),
-        }
-    }
-
-    // Decode tests
-    #[test]
-    fn test_soc_decode_valid() {
-        // total_voltage = 54.3V (0x021F), current = 2.5A (0x7549 with 30000 offset), soc_percent = 75.5% (0x02F3)
-        // CRC: 0xA5+0x40+0x90+0x08+0x02+0x1F+0x00+0x00+0x75+0x49+0x02+0xF3 = 849 = 0x0351 => 0x51
-        let bytes: [u8; 13] = [0xA5, 0x40, 0x90, 0x08, 0x02, 0x1F, 0x00, 0x00, 0x75, 0x49, 0x02, 0xF3, 0x51];
-        let expected_soc = Soc {
-            total_voltage: 54.3,
-            current: 2.5,
-            soc_percent: 75.5,
-        };
-        match Soc::decode(&bytes) {
-            Ok(decoded) => {
-                assert!((decoded.total_voltage - expected_soc.total_voltage).abs() < f32::EPSILON);
-                assert!((decoded.current - expected_soc.current).abs() < f32::EPSILON);
-                assert!((decoded.soc_percent - expected_soc.soc_percent).abs() < f32::EPSILON);
-            }
-            Err(e) => panic!("Decoding failed: {:?}", e),
-        }
-    }
-
-    #[test]
-    fn test_soc_decode_negative_current() {
-        // total_voltage = 50.0V (0x01F4), current = -10.0A (0x749C from 29900, since (29900-30000)/10 = -10), soc_percent = 50.0% (0x01F4)
-        // CRC: 0xA5+0x40+0x90+0x08+0x01+0xF4+0x00+0x00+0x74+0x9C+0x01+0xF4 = 801 = 0x0321 => 0x21
-        let bytes: [u8; 13] = [0xA5, 0x40, 0x90, 0x08, 0x01, 0xF4, 0x00, 0x00, 0x74, 0x9C, 0x01, 0xF4, 0x21];
-        let expected_soc = Soc {
-            total_voltage: 50.0,
-            current: -10.0,
-            soc_percent: 50.0,
-        };
-        match Soc::decode(&bytes) {
-            Ok(decoded) => {
-                assert!((decoded.total_voltage - expected_soc.total_voltage).abs() < f32::EPSILON);
-                assert!((decoded.current - expected_soc.current).abs() < f32::EPSILON);
-                assert!((decoded.soc_percent - expected_soc.soc_percent).abs() < f32::EPSILON);
-            }
-            Err(e) => panic!("Decoding failed: {:?}", e),
-        }
-    }
-
-    #[test]
-    fn test_soc_decode_invalid_checksum() {
-        let bytes: [u8; 13] = [0xA5, 0x40, 0x90, 0x08, 0x02, 0x1F, 0x00, 0x00, 0x75, 0x49, 0x02, 0xF3, 0x52]; // Incorrect CRC (0x51 is correct)
-        let result = Soc::decode(&bytes);
-        assert!(result.is_err());
-        match result.err().unwrap() {
-            Error::CheckSumError => {} // Expected
-            e => panic!("Unexpected error type: {:?}", e),
-        }
-    }
-
-    #[test]
-    fn test_soc_decode_invalid_len() {
-        let bytes: [u8; 12] = [0xA5, 0x40, 0x90, 0x08, 0x02, 0x1F, 0x00, 0x00, 0x75, 0x49, 0x02, 0xF3]; // Missing CRC byte
-        let result = Soc::decode(&bytes);
-        assert!(result.is_err());
-        match result.err().unwrap() {
-            Error::ReplySizeError => {} // Expected
-            e => panic!("Unexpected error type: {:?}", e),
-        }
-    }
-
-    #[test]
-    fn test_cell_voltages_decode_valid_multi_frame() {
-        // n_cells = 4, so 2 frames.
-        // Frame 1: Cell1=3.300V (0x0CE4), Cell2=3.301V (0x0CE5), Cell3=3.302V (0x0CE6)
-        // Frame 1 Bytes: [0xA5, 0x40, 0x95, 0x08, 0x01, 0x0C, 0xE4, 0x0C, 0xE5, 0x0C, 0xE6, 0x00, CRC1]
-        // CRC1: 0xA5+0x40+0x95+0x08+0x01+0x0C+0xE4+0x0C+0xE5+0x0C+0xE6+0x00 = 1110 = 0x0456 => 0x56
-        let frame1: [u8; 13] = [0xA5, 0x40, 0x95, 0x08, 0x01, 0x0C, 0xE4, 0x0C, 0xE5, 0x0C, 0xE6, 0x00, 0x56];
-
-        // Frame 2: Cell4=3.303V (0x0CE7)
-        // Frame 2 Bytes: [0xA5, 0x40, 0x95, 0x08, 0x02, 0x0C, 0xE7, 0x00, 0x00, 0x00, 0x00, 0x00, CRC2]
-        // CRC2: 0xA5+0x40+0x95+0x08+0x02+0x0C+0xE7+0x00+0x00+0x00+0x00+0x00 = 631 = 0x0277 => 0x77
-        let frame2: [u8; 13] = [0xA5, 0x40, 0x95, 0x08, 0x02, 0x0C, 0xE7, 0x00, 0x00, 0x00, 0x00, 0x00, 0x77];
-        
-        let mut combined_bytes = Vec::new();
-        combined_bytes.extend_from_slice(&frame1);
-        combined_bytes.extend_from_slice(&frame2);
-
-        let expected_voltages = vec![3.300, 3.301, 3.302, 3.303];
-        
-        match CellVoltages::decode(&combined_bytes, 4) {
-            Ok(decoded) => {
-                assert_eq!(decoded.len(), expected_voltages.len());
-                for (d, e) in decoded.iter().zip(expected_voltages.iter()) {
-                    assert!((d - e).abs() < f32::EPSILON);
-                }
-            }
-            Err(e) => panic!("Decoding failed: {:?}", e),
-        }
-    }
-
-    #[test]
-    fn test_cell_voltages_decode_frame_out_of_order() {
-        let frame1: [u8; 13] = [0xA5, 0x40, 0x95, 0x08, 0x01, 0x0C, 0xE4, 0x0C, 0xE5, 0x0C, 0xE6, 0x00, 0x56];
-        let frame2_wrong_order: [u8; 13] = [0xA5, 0x40, 0x95, 0x08, 0x01, 0x0C, 0xE7, 0x00, 0x00, 0x00, 0x00, 0x00, 0x75]; // Frame num 0x01, CRC for this data
-        
-        let mut combined_bytes = Vec::new();
-        combined_bytes.extend_from_slice(&frame1);
-        combined_bytes.extend_from_slice(&frame2_wrong_order);
-
-        let result = CellVoltages::decode(&combined_bytes, 4);
-        assert!(result.is_err());
-        match result.err().unwrap() {
-            Error::FrameNoError => {} // Expected
-            e => panic!("Unexpected error type: {:?}", e),
-        }
-    }
-
-    #[test]
-    fn test_cell_temperatures_decode_valid_multi_frame() {
-        // n_sensors = 8, so 2 frames.
-        // Frame 1: Sens1=20C(raw 60,0x3C), Sens2=21C(61,0x3D), Sens3=22C(62,0x3E), Sens4=23C(63,0x3F), Sens5=24C(64,0x40), Sens6=25C(65,0x41), Sens7=26C(66,0x42)
-        // Frame 1 Bytes: [0xA5, 0x40, 0x96, 0x08, 0x01, 0x3C, 0x3D, 0x3E, 0x3F, 0x40, 0x41, 0x42, CRC1]
-        // CRC1: 0xA5+0x40+0x96+0x08+0x01+0x3C+0x3D+0x3E+0x3F+0x40+0x41+0x42 = 829 = 0x033D => 0x3D
-        let frame1: [u8; 13] = [0xA5, 0x40, 0x96, 0x08, 0x01, 0x3C, 0x3D, 0x3E, 0x3F, 0x40, 0x41, 0x42, 0x3D];
-
-        // Frame 2: Sens8=27C(raw 67,0x43)
-        // Frame 2 Bytes: [0xA5, 0x40, 0x96, 0x08, 0x02, 0x43, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, CRC2]
-        // CRC2: 0xA5+0x40+0x96+0x08+0x02+0x43+0x00+0x00+0x00+0x00+0x00+0x00 = 456 = 0x01C8 => 0xC8
-        let frame2: [u8; 13] = [0xA5, 0x40, 0x96, 0x08, 0x02, 0x43, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xC8];
-        
-        let mut combined_bytes = Vec::new();
-        combined_bytes.extend_from_slice(&frame1);
-        combined_bytes.extend_from_slice(&frame2);
-
-        let expected_temperatures = vec![20, 21, 22, 23, 24, 25, 26, 27];
-        
-        match CellTemperatures::decode(&combined_bytes, 8) {
-            Ok(decoded) => {
-                assert_eq!(decoded, expected_temperatures);
-            }
-            Err(e) => panic!("Decoding failed: {:?}", e),
-        }
-    }
-
-    #[test]
-    fn test_cell_balance_state_decode_valid() {
-        // n_cells = 16. Cells 0, 8, 15 are balancing.
-        // Data bytes: [0x01, 0x81, 0x00, 0x00, 0x00, 0x00]
-        // Frame: [0xA5, 0x40, 0x97, 0x08, 0x01, 0x81, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, CRC]
-        // CRC: 0xA5+0x40+0x97+0x08+0x01+0x81+0x00+0x00+0x00+0x00+0x00+0x00 = 518 = 0x0206 => 0x06
-        let bytes: [u8; 13] = [0xA5, 0x40, 0x97, 0x08, 0x01, 0x81, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x06];
-        
-        let mut expected_state = vec![false; 16];
-        expected_state[0] = true;  // Cell 0
-        expected_state[8] = true;  // Cell 8
-        expected_state[15] = true; // Cell 15
-        
-        match CellBalanceState::decode(&bytes, 16) {
-            Ok(decoded) => {
-                assert_eq!(decoded, expected_state);
-            }
-            Err(e) => panic!("Decoding failed: {:?}", e),
-        }
-    }
-
-    #[test]
-    fn test_cell_balance_state_decode_n_cells_less_than_byte_boundary() {
-        // n_cells = 5. Cell 0 and Cell 4 are balancing.
-        // Data byte 0: 0b00010001 = 0x11
-        // Frame: [0xA5, 0x40, 0x97, 0x08, 0x11, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, CRC]
-        // CRC: 0xA5+0x40+0x97+0x08+0x11+0x00+0x00+0x00+0x00+0x00+0x00+0x00 = 463 = 0x01CF => 0xCF
-        let bytes: [u8; 13] = [0xA5, 0x40, 0x97, 0x08, 0x11, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xCF];
-        
-        let mut expected_state = vec![false; 5];
-        expected_state[0] = true; // Cell 0
-        expected_state[4] = true; // Cell 4
-        
-        match CellBalanceState::decode(&bytes, 5) {
-            Ok(decoded) => {
-                assert_eq!(decoded, expected_state);
-            }
-            Err(e) => panic!("Decoding failed: {:?}", e),
-        }
-    }
-
-    #[test]
-    fn test_error_code_decode_valid() {
-        // Errors: CellVoltHighLevel1 (byte 4, bit 0), ChargeTempLowLevel2 (byte 5, bit 3), SocHighLevel1 (byte 6, bit 4), DiffTempLevel2 (byte 7, bit 3), AfeCollectChipErr (byte 9, bit 0)
-        // rx_buffer[4] = 0x01
-        // rx_buffer[5] = 0x08
-        // rx_buffer[6] = 0x10
-        // rx_buffer[7] = 0x08
-        // rx_buffer[8] = 0x00
-        // rx_buffer[9] = 0x01
-        // rx_buffer[10]= 0x00
-        // rx_buffer[11]= 0x00
-        // Frame: [0xA5, 0x40, 0x98, 0x08, 0x01, 0x08, 0x10, 0x08, 0x00, 0x01, 0x00, 0x00, CRC]
-        // CRC: 0xA5+0x40+0x98+0x08+0x01+0x08+0x10+0x08+0x00+0x01+0x00+0x00 = 423 = 0x01A7 => 0xA7
-        let bytes: [u8; 13] = [0xA5, 0x40, 0x98, 0x08, 0x01, 0x08, 0x10, 0x08, 0x00, 0x01, 0x00, 0x00, 0xA7];
-        
-        let expected_errors = vec![
-            ErrorCode::CellVoltHighLevel1,
-            ErrorCode::ChargeTempLowLevel2,
-            ErrorCode::SocHighLevel1,
-            ErrorCode::DiffTempLevel2,
-            ErrorCode::AfeCollectChipErr,
-        ];
-        
-        match ErrorCode::decode(&bytes) {
-            Ok(decoded) => {
-                assert_eq!(decoded.len(), expected_errors.len());
-                for err in expected_errors {
-                    assert!(decoded.contains(&err), "Missing error: {:?}", err);
-                }
-            }
-            Err(e) => panic!("Decoding failed: {:?}", e),
-        }
-    }
-
-    #[test]
-    fn test_error_code_decode_no_errors() {
-        // Frame: [0xA5, 0x40, 0x98, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, CRC]
-        // CRC: 0xA5+0x40+0x98+0x08+0x00+0x00+0x00+0x00+0x00+0x00+0x00+0x00 = 415 = 0x019F => 0x9F
-        let bytes: [u8; 13] = [0xA5, 0x40, 0x98, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x9F];
-        
-        match ErrorCode::decode(&bytes) {
-            Ok(decoded) => {
-                assert!(decoded.is_empty());
-            }
-            Err(e) => panic!("Decoding failed: {:?}", e),
-        }
-    }
-
-    // Request encoding tests
-    #[test]
-    fn test_soc_request() {
-        let expected_frame: [u8; 13] = [0xA5, 0x40, 0x90, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x7D];
-        assert_eq!(Soc::request(Address::Host), expected_frame);
-    }
-
-    #[test]
-    fn test_cell_voltage_range_request() {
-        // CMD = 0x91
-        // CRC = 0xA5+0x40+0x91+0x08 = 382 = 0x017E => 0x7E
-        let expected_frame: [u8; 13] = [0xA5, 0x40, 0x91, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x7E];
-        assert_eq!(CellVoltageRange::request(Address::Host), expected_frame);
-    }
-
-    #[test]
-    fn test_temperature_range_request() {
-        // CMD = 0x92
-        // CRC = 0xA5+0x40+0x92+0x08 = 383 = 0x017F => 0x7F
-        let expected_frame: [u8; 13] = [0xA5, 0x40, 0x92, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x7F];
-        assert_eq!(TemperatureRange::request(Address::Host), expected_frame);
-    }
-
-    #[test]
-    fn test_mosfet_status_request() {
-        // CMD = 0x93
-        // CRC = 0xA5+0x40+0x93+0x08 = 384 = 0x0180 => 0x80
-        let expected_frame: [u8; 13] = [0xA5, 0x40, 0x93, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80];
-        assert_eq!(MosfetStatus::request(Address::Host), expected_frame);
-    }
-
-    #[test]
-    fn test_status_request() {
-        // CMD = 0x94
-        // CRC = 0xA5+0x40+0x94+0x08 = 385 = 0x0181 => 0x81
-        let expected_frame: [u8; 13] = [0xA5, 0x40, 0x94, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x81];
-        assert_eq!(Status::request(Address::Host), expected_frame);
-    }
-
-    #[test]
-    fn test_cell_voltages_request() {
-        // CMD = 0x95
-        // CRC = 0xA5+0x40+0x95+0x08 = 386 = 0x0182 => 0x82
-        let expected_frame: [u8; 13] = [0xA5, 0x40, 0x95, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x82];
-        assert_eq!(CellVoltages::request(Address::Host), expected_frame);
-    }
-
-    #[test]
-    fn test_cell_temperatures_request() {
-        // CMD = 0x96
-        // CRC = 0xA5+0x40+0x96+0x08 = 387 = 0x0183 => 0x83
-        let expected_frame: [u8; 13] = [0xA5, 0x40, 0x96, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x83];
-        assert_eq!(CellTemperatures::request(Address::Host), expected_frame);
-    }
-
-    #[test]
-    fn test_cell_balance_state_request() {
-        // CMD = 0x97
-        // CRC = 0xA5+0x40+0x97+0x08 = 388 = 0x0184 => 0x84
-        let expected_frame: [u8; 13] = [0xA5, 0x40, 0x97, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x84];
-        assert_eq!(CellBalanceState::request(Address::Host), expected_frame);
-    }
-
-    #[test]
-    fn test_error_code_request() {
-        // CMD = 0x98
-        // CRC = 0xA5+0x40+0x98+0x08 = 389 = 0x0185 => 0x85
-        let expected_frame: [u8; 13] = [0xA5, 0x40, 0x98, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x85];
-        assert_eq!(ErrorCode::request(Address::Host), expected_frame);
-    }
-
-    #[test]
-    fn test_set_discharge_mosfet_request_enable() {
-        // CMD = 0xD9, Data[0] = 0x01
-        // CRC = 0xA5+0x40+0xD9+0x08+0x01 = 165+64+217+8+1 = 455 = 0x01C7 => 0xC7
-        let expected_frame: [u8; 13] = [0xA5, 0x40, 0xD9, 0x08, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xC7];
-        assert_eq!(SetDischargeMosfet::request(Address::Host, true), expected_frame);
-    }
-
-    #[test]
-    fn test_set_discharge_mosfet_request_disable() {
-        // CMD = 0xD9, Data[0] = 0x00
-        // CRC = 0xA5+0x40+0xD9+0x08+0x00 = 165+64+217+8+0 = 454 = 0x01C6 => 0xC6
-        let expected_frame: [u8; 13] = [0xA5, 0x40, 0xD9, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xC6];
-        assert_eq!(SetDischargeMosfet::request(Address::Host, false), expected_frame);
-    }
-    
-    #[test]
-    fn test_set_charge_mosfet_request_enable() {
-        // CMD = 0xDA, Data[0] = 0x01
-        // CRC = 0xA5+0x40+0xDA+0x08+0x01 = 165+64+218+8+1 = 456 = 0x01C8 => 0xC8
-        let expected_frame: [u8; 13] = [0xA5, 0x40, 0xDA, 0x08, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xC8];
-        assert_eq!(SetChargeMosfet::request(Address::Host, true), expected_frame);
-    }
-
-    #[test]
-    fn test_set_soc_request() {
-        // CMD = 0x21, SOC = 80.5% => 805 => 0x0325. Data[6]=0x03, Data[7]=0x25
-        // Frame: A5 40 21 08 00 00 00 00 00 00 03 25 CRC
-        // CRC: 0xA5+0x40+0x21+0x08+0x00+0x00+0x00+0x00+0x00+0x00+0x03+0x25 = 165+64+33+8+0+0+0+0+0+0+3+37 = 310 = 0x0136 => 0x36
-        let expected_frame: [u8; 13] = [0xA5, 0x40, 0x21, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x25, 0x36];
-        assert_eq!(SetSoc::request(Address::Host, 80.5), expected_frame);
-    }
-
-    #[test]
-    fn test_bms_reset_request() {
-        // CMD = 0x00
-        // CRC = 0xA5+0x40+0x00+0x08 = 165+64+0+8 = 237 = 0xED
-        let expected_frame: [u8; 13] = [0xA5, 0x40, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xED];
-        assert_eq!(BmsReset::request(Address::Host), expected_frame);
-    }
-}
-
 /// Represents the range of cell voltages (highest and lowest) in the battery pack.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
@@ -1188,7 +656,7 @@ impl CellBalanceState {
                 result.push(read_bit!(rx_buffer[4 + i], j));
                 n_cell += 1;
                 if n_cell >= n_cells {
-                    break;
+                    return Ok(result);
                 }
             }
         }
@@ -1197,7 +665,7 @@ impl CellBalanceState {
 }
 
 /// Represents various error codes and alarm states reported by the BMS.
-#[derive(Debug, Clone, thiserror::Error)]
+#[derive(Debug, Clone, thiserror::Error, PartialEq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum ErrorCode {
     /// Cell voltage too high (Level 1 Alarm).
@@ -1571,7 +1039,8 @@ impl SetSoc {
         let mut tx_buffer = create_request_header(address, 0x21);
         let value = {
             let val = (soc_percent * 10.0).round();
-            if val > 1000.0 { // BMS expects value * 10, so 100.0% is 1000
+            if val > 1000.0 {
+                // BMS expects value * 10, so 100.0% is 1000
                 1000
             } else if val < 0.0 {
                 0
@@ -1650,5 +1119,636 @@ impl BmsReset {
     pub fn decode(rx_buffer: &[u8]) -> std::result::Result<(), Error> {
         validate_len(rx_buffer, Self::reply_size())?;
         validate_checksum(rx_buffer)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Helper function to calculate checksum for test data
+    fn calculate_test_checksum(data: &[u8]) -> u8 {
+        let mut checksum: u8 = 0;
+        for byte in data.iter().take(data.len() - 1) {
+            checksum = checksum.wrapping_add(*byte);
+        }
+        checksum
+    }
+
+    #[test]
+    fn test_calc_crc_valid() {
+        let data1: [u8; 13] = [
+            0xA5, 0x40, 0x90, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        ]; // Placeholder CRC
+        let expected_crc1 = calculate_test_checksum(&data1);
+        assert_eq!(calc_crc(&data1), expected_crc1);
+
+        let data2: [u8; 13] = [
+            0xA5, 0x40, 0x90, 0x08, 0xDE, 0xAD, 0xBE, 0xEF, 0xCA, 0xFE, 0xBA, 0xBE, 0x00,
+        ]; // Placeholder CRC
+        let expected_crc2 = calculate_test_checksum(&data2);
+        assert_eq!(calc_crc(&data2), expected_crc2);
+
+        let data3: [u8; 13] = [
+            0xA5, 0x01, 0x02, 0x08, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x00,
+        ];
+        let expected_crc3 = calculate_test_checksum(&data3);
+        assert_eq!(calc_crc(&data3), expected_crc3);
+    }
+
+    #[test]
+    fn test_validate_checksum_valid() {
+        let mut data: [u8; 13] = [
+            0xA5, 0x40, 0x90, 0x08, 0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF, 0x00,
+        ];
+        data[12] = calc_crc(&data); // Set correct CRC
+        assert!(validate_checksum(&data).is_ok());
+    }
+
+    #[test]
+    fn test_validate_checksum_invalid() {
+        let mut data: [u8; 13] = [
+            0xA5, 0x40, 0x90, 0x08, 0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF, 0x00,
+        ];
+        data[12] = calc_crc(&data).wrapping_add(1); // Set incorrect CRC
+        let result = validate_checksum(&data);
+        assert!(result.is_err());
+        match result.err().unwrap() {
+            Error::CheckSumError => {} // Expected error
+            _ => panic!("Unexpected error type"),
+        }
+    }
+
+    #[test]
+    fn test_status_decode_valid() {
+        // cells = 16 (0x10), temp_sensors = 4 (0x04), charger_running = true (0x01), load_running = false (0x00)
+        // states (rx_buffer[8]): DI1=false, DI2=true, DI3=false, DI4=true, DO1=false, DO2=true, DO3=false, DO4=true => 0b10101010 = 0xAA
+        // cycles = 1234 (0x04D2)
+        // CRC: 0xA5+0x40+0x94+0x08+0x10+0x04+0x01+0x00+0xAA+0x04+0xD2+0x00 = 790 = 0x0316 => 0x16
+        let bytes: [u8; 13] = [
+            0xA5, 0x40, 0x94, 0x08, 0x10, 0x04, 0x01, 0x00, 0xAA, 0x04, 0xD2, 0x00, 0x16,
+        ];
+        let expected_status = Status {
+            cells: 16,
+            temperature_sensors: 4,
+            charger_running: true,
+            load_running: false,
+            states: IOState {
+                di1: false, // bit 0 of 0xAA
+                di2: true,  // bit 1 of 0xAA
+                di3: false, // bit 2 of 0xAA
+                di4: true,  // bit 3 of 0xAA
+                do1: false, // bit 4 of 0xAA
+                do2: true,  // bit 5 of 0xAA
+                do3: false, // bit 6 of 0xAA
+                do4: true,  // bit 7 of 0xAA
+            },
+            cycles: 1234,
+        };
+        match Status::decode(&bytes) {
+            Ok(decoded) => {
+                assert_eq!(decoded.cells, expected_status.cells);
+                assert_eq!(
+                    decoded.temperature_sensors,
+                    expected_status.temperature_sensors
+                );
+                assert_eq!(decoded.charger_running, expected_status.charger_running);
+                assert_eq!(decoded.load_running, expected_status.load_running);
+                assert_eq!(decoded.states.di1, expected_status.states.di1);
+                assert_eq!(decoded.states.di2, expected_status.states.di2);
+                assert_eq!(decoded.states.di3, expected_status.states.di3);
+                assert_eq!(decoded.states.di4, expected_status.states.di4);
+                assert_eq!(decoded.states.do1, expected_status.states.do1);
+                assert_eq!(decoded.states.do2, expected_status.states.do2);
+                assert_eq!(decoded.states.do3, expected_status.states.do3);
+                assert_eq!(decoded.states.do4, expected_status.states.do4);
+                assert_eq!(decoded.cycles, expected_status.cycles);
+            }
+            Err(e) => panic!("Decoding failed: {:?}", e),
+        }
+    }
+
+    #[test]
+    fn test_mosfet_status_decode_valid() {
+        // mode = Charging (1), charging_mosfet = true (1), discharging_mosfet = false (0), bms_cycles = 150 (0x96), capacity_ah = 50.123Ah (50123 -> 0x0000C3CB)
+        // CRC: 0xA5+0x40+0x93+0x08+0x01+0x01+0x00+0x96+0x00+0x00+0xC3+0xCB = 934 = 0x03A6 => 0xA6
+        let bytes: [u8; 13] = [
+            0xA5, 0x40, 0x93, 0x08, 0x01, 0x01, 0x00, 0x96, 0x00, 0x00, 0xC3, 0xCB, 0xA6,
+        ];
+        let expected_status = MosfetStatus {
+            mode: MosfetMode::Charging,
+            charging_mosfet: true,
+            discharging_mosfet: false,
+            bms_cycles: 150,
+            capacity_ah: 50.123,
+        };
+        match MosfetStatus::decode(&bytes) {
+            Ok(decoded) => {
+                assert!(matches!(decoded.mode, MosfetMode::Charging));
+                assert_eq!(decoded.charging_mosfet, expected_status.charging_mosfet);
+                assert_eq!(
+                    decoded.discharging_mosfet,
+                    expected_status.discharging_mosfet
+                );
+                assert_eq!(decoded.bms_cycles, expected_status.bms_cycles);
+                assert!((decoded.capacity_ah - expected_status.capacity_ah).abs() < f32::EPSILON);
+            }
+            Err(e) => panic!("Decoding failed: {:?}", e),
+        }
+    }
+
+    #[test]
+    fn test_temperature_range_decode_valid() {
+        // highest_temperature = 25C (0x41 with 40 offset), highest_sensor = 1, lowest_temperature = 10C (0x32 with 40 offset), lowest_sensor = 2
+        // CRC: 0xA5+0x40+0x92+0x08+0x41+0x01+0x32+0x02+0x00+0x00+0x00+0x00 = 501 = 0x01F5 => 0xF5
+        let bytes: [u8; 13] = [
+            0xA5, 0x40, 0x92, 0x08, 0x41, 0x01, 0x32, 0x02, 0x00, 0x00, 0x00, 0x00, 0xF5,
+        ];
+        let expected_range = TemperatureRange {
+            highest_temperature: 25,
+            highest_sensor: 1,
+            lowest_temperature: 10,
+            lowest_sensor: 2,
+        };
+        match TemperatureRange::decode(&bytes) {
+            Ok(decoded) => {
+                assert_eq!(
+                    decoded.highest_temperature,
+                    expected_range.highest_temperature
+                );
+                assert_eq!(decoded.highest_sensor, expected_range.highest_sensor);
+                assert_eq!(
+                    decoded.lowest_temperature,
+                    expected_range.lowest_temperature
+                );
+                assert_eq!(decoded.lowest_sensor, expected_range.lowest_sensor);
+            }
+            Err(e) => panic!("Decoding failed: {:?}", e),
+        }
+    }
+
+    #[test]
+    fn test_cell_voltage_range_decode_valid() {
+        // highest_voltage = 3.456V (0x0D80), highest_cell = 1, lowest_voltage = 3.123V (0x0C33), lowest_cell = 5
+        // CRC: 0xA5+0x40+0x91+0x08+0x0D+0x80+0x01+0x0C+0x33+0x05+0x00+0x00 = 592 = 0x0250 => 0x50
+        let bytes: [u8; 13] = [
+            0xA5, 0x40, 0x91, 0x08, 0x0D, 0x80, 0x01, 0x0C, 0x33, 0x05, 0x00, 0x00, 0x50,
+        ];
+        let expected_range = CellVoltageRange {
+            highest_voltage: 3.456,
+            highest_cell: 1,
+            lowest_voltage: 3.123,
+            lowest_cell: 5,
+        };
+        match CellVoltageRange::decode(&bytes) {
+            Ok(decoded) => {
+                assert!(
+                    (decoded.highest_voltage - expected_range.highest_voltage).abs() < f32::EPSILON
+                );
+                assert_eq!(decoded.highest_cell, expected_range.highest_cell);
+                assert!(
+                    (decoded.lowest_voltage - expected_range.lowest_voltage).abs() < f32::EPSILON
+                );
+                assert_eq!(decoded.lowest_cell, expected_range.lowest_cell);
+            }
+            Err(e) => panic!("Decoding failed: {:?}", e),
+        }
+    }
+
+    #[test]
+    fn test_validate_len_valid() {
+        let data: [u8; 13] = [0; 13];
+        assert!(validate_len(&data, 13).is_ok());
+    }
+
+    #[test]
+    fn test_validate_len_valid_larger_buffer() {
+        let data: [u8; 15] = [0; 15]; // Buffer is larger than required size
+        assert!(validate_len(&data, 13).is_ok());
+    }
+
+    #[test]
+    fn test_validate_len_invalid() {
+        let data: [u8; 12] = [0; 12];
+        let result = validate_len(&data, 13);
+        assert!(result.is_err());
+        match result.err().unwrap() {
+            Error::ReplySizeError => {} // Expected error
+            _ => panic!("Unexpected error type"),
+        }
+    }
+
+    #[test]
+    fn test_validate_len_empty() {
+        let data: [u8; 0] = [];
+        let result = validate_len(&data, 13);
+        assert!(result.is_err());
+        match result.err().unwrap() {
+            Error::ReplySizeError => {} // Expected error
+            _ => panic!("Unexpected error type"),
+        }
+    }
+
+    // Decode tests
+    #[test]
+    fn test_soc_decode_valid() {
+        // total_voltage = 54.3V (0x021F), current = 2.5A (0x7549 with 30000 offset), soc_percent = 75.5% (0x02F3)
+        // CRC: 0xA5+0x40+0x90+0x08+0x02+0x1F+0x00+0x00+0x75+0x49+0x02+0xF3 = 849 = 0x0351 => 0x51
+        let bytes: [u8; 13] = [
+            0xA5, 0x40, 0x90, 0x08, 0x02, 0x1F, 0x00, 0x00, 0x75, 0x49, 0x02, 0xF3, 0x51,
+        ];
+        let expected_soc = Soc {
+            total_voltage: 54.3,
+            current: 2.5,
+            soc_percent: 75.5,
+        };
+        match Soc::decode(&bytes) {
+            Ok(decoded) => {
+                assert!((decoded.total_voltage - expected_soc.total_voltage).abs() < f32::EPSILON);
+                assert!((decoded.current - expected_soc.current).abs() < f32::EPSILON);
+                assert!((decoded.soc_percent - expected_soc.soc_percent).abs() < f32::EPSILON);
+            }
+            Err(e) => panic!("Decoding failed: {:?}", e),
+        }
+    }
+
+    #[test]
+    fn test_soc_decode_negative_current() {
+        // total_voltage = 50.0V (0x01F4), current = -10.0A (0x74CC from 29900, since (29900-30000)/10 = -10), soc_percent = 50.0% (0x01F4)
+        // CRC: 0xA5+0x40+0x90+0x08+0x01+0xF4+0x00+0x00+0x74+0x9C+0x01+0xF4 = 801 = 0x0321 => 0xA7
+        let bytes: [u8; 13] = [
+            0xA5, 0x40, 0x90, 0x08, 0x01, 0xF4, 0x00, 0x00, 0x74, 0xCC, 0x01, 0xF4, 0xA7,
+        ];
+        let expected_soc = Soc {
+            total_voltage: 50.0,
+            current: -10.0,
+            soc_percent: 50.0,
+        };
+        match Soc::decode(&bytes) {
+            Ok(decoded) => {
+                assert!((decoded.total_voltage - expected_soc.total_voltage).abs() < f32::EPSILON);
+                assert!((decoded.current - expected_soc.current).abs() < f32::EPSILON);
+                assert!((decoded.soc_percent - expected_soc.soc_percent).abs() < f32::EPSILON);
+            }
+            Err(e) => panic!("Decoding failed: {:?}", e),
+        }
+    }
+
+    #[test]
+    fn test_soc_decode_invalid_checksum() {
+        let bytes: [u8; 13] = [
+            0xA5, 0x40, 0x90, 0x08, 0x02, 0x1F, 0x00, 0x00, 0x75, 0x49, 0x02, 0xF3, 0x52,
+        ]; // Incorrect CRC (0x51 is correct)
+        let result = Soc::decode(&bytes);
+        assert!(result.is_err());
+        match result.err().unwrap() {
+            Error::CheckSumError => {} // Expected
+            e => panic!("Unexpected error type: {:?}", e),
+        }
+    }
+
+    #[test]
+    fn test_soc_decode_invalid_len() {
+        let bytes: [u8; 12] = [
+            0xA5, 0x40, 0x90, 0x08, 0x02, 0x1F, 0x00, 0x00, 0x75, 0x49, 0x02, 0xF3,
+        ]; // Missing CRC byte
+        let result = Soc::decode(&bytes);
+        assert!(result.is_err());
+        match result.err().unwrap() {
+            Error::ReplySizeError => {} // Expected
+            e => panic!("Unexpected error type: {:?}", e),
+        }
+    }
+
+    #[test]
+    fn test_cell_voltages_decode_valid_multi_frame() {
+        // n_cells = 4, so 2 frames.
+        // Frame 1: Cell1=3.300V (0x0CE4), Cell2=3.301V (0x0CE5), Cell3=3.302V (0x0CE6)
+        // Frame 1 Bytes: [0xA5, 0x40, 0x95, 0x08, 0x01, 0x0C, 0xE4, 0x0C, 0xE5, 0x0C, 0xE6, 0x00, CRC1]
+        // CRC1: 0xA5+0x40+0x95+0x08+0x01+0x0C+0xE4+0x0C+0xE5+0x0C+0xE6+0x00 = 1110 = 0x0456 => 0x56
+        let frame1: [u8; 13] = [
+            0xA5, 0x40, 0x95, 0x08, 0x01, 0x0C, 0xE4, 0x0C, 0xE5, 0x0C, 0xE6, 0x00, 0x56,
+        ];
+
+        // Frame 2: Cell4=3.303V (0x0CE7)
+        // Frame 2 Bytes: [0xA5, 0x40, 0x95, 0x08, 0x02, 0x0C, 0xE7, 0x00, 0x00, 0x00, 0x00, 0x00, CRC2]
+        // CRC2: 0xA5+0x40+0x95+0x08+0x02+0x0C+0xE7+0x00+0x00+0x00+0x00+0x00 = 631 = 0x0277 => 0x77
+        let frame2: [u8; 13] = [
+            0xA5, 0x40, 0x95, 0x08, 0x02, 0x0C, 0xE7, 0x00, 0x00, 0x00, 0x00, 0x00, 0x77,
+        ];
+
+        let mut combined_bytes = Vec::new();
+        combined_bytes.extend_from_slice(&frame1);
+        combined_bytes.extend_from_slice(&frame2);
+
+        let expected_voltages = vec![3.300, 3.301, 3.302, 3.303];
+
+        match CellVoltages::decode(&combined_bytes, 4) {
+            Ok(decoded) => {
+                assert_eq!(decoded.len(), expected_voltages.len());
+                for (d, e) in decoded.iter().zip(expected_voltages.iter()) {
+                    assert!((d - e).abs() < f32::EPSILON);
+                }
+            }
+            Err(e) => panic!("Decoding failed: {:?}", e),
+        }
+    }
+
+    #[test]
+    fn test_cell_voltages_decode_frame_out_of_order() {
+        let frame1: [u8; 13] = [
+            0xA5, 0x40, 0x95, 0x08, 0x01, 0x0C, 0xE4, 0x0C, 0xE5, 0x0C, 0xE6, 0x00, 0x56,
+        ];
+        let frame2_wrong_order: [u8; 13] = [
+            0xA5, 0x40, 0x95, 0x08, 0x01, 0x0C, 0xE7, 0x00, 0x00, 0x00, 0x00, 0x00, 0x75,
+        ]; // Frame num 0x01, CRC for this data
+
+        let mut combined_bytes = Vec::new();
+        combined_bytes.extend_from_slice(&frame1);
+        combined_bytes.extend_from_slice(&frame2_wrong_order);
+
+        let result = CellVoltages::decode(&combined_bytes, 4);
+        assert!(result.is_err());
+        match result.err().unwrap() {
+            Error::FrameNoError => {} // Expected
+            e => panic!("Unexpected error type: {:?}", e),
+        }
+    }
+
+    #[test]
+    fn test_cell_temperatures_decode_valid_multi_frame() {
+        // n_sensors = 8, so 2 frames.
+        // Frame 1: Sens1=20C(raw 60,0x3C), Sens2=21C(61,0x3D), Sens3=22C(62,0x3E), Sens4=23C(63,0x3F), Sens5=24C(64,0x40), Sens6=25C(65,0x41), Sens7=26C(66,0x42)
+        // Frame 1 Bytes: [0xA5, 0x40, 0x96, 0x08, 0x01, 0x3C, 0x3D, 0x3E, 0x3F, 0x40, 0x41, 0x42, CRC1]
+        // CRC1: 0xA5+0x40+0x96+0x08+0x01+0x3C+0x3D+0x3E+0x3F+0x40+0x41+0x42 = 829 = 0x033D => 0x3D
+        let frame1: [u8; 13] = [
+            0xA5, 0x40, 0x96, 0x08, 0x01, 0x3C, 0x3D, 0x3E, 0x3F, 0x40, 0x41, 0x42, 0x3D,
+        ];
+
+        // Frame 2: Sens8=27C(raw 67,0x43)
+        // Frame 2 Bytes: [0xA5, 0x40, 0x96, 0x08, 0x02, 0x43, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, CRC2]
+        // CRC2: 0xA5+0x40+0x96+0x08+0x02+0x43+0x00+0x00+0x00+0x00+0x00+0x00 = 456 = 0x01C8 => 0xC8
+        let frame2: [u8; 13] = [
+            0xA5, 0x40, 0x96, 0x08, 0x02, 0x43, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xC8,
+        ];
+
+        let mut combined_bytes = Vec::new();
+        combined_bytes.extend_from_slice(&frame1);
+        combined_bytes.extend_from_slice(&frame2);
+
+        let expected_temperatures = vec![20, 21, 22, 23, 24, 25, 26, 27];
+
+        match CellTemperatures::decode(&combined_bytes, 8) {
+            Ok(decoded) => {
+                assert_eq!(decoded, expected_temperatures);
+            }
+            Err(e) => panic!("Decoding failed: {:?}", e),
+        }
+    }
+
+    #[test]
+    fn test_cell_balance_state_decode_valid() {
+        // n_cells = 16. Cells 0, 8, 15 are balancing.
+        // Data bytes: [0x01, 0x81, 0x00, 0x00, 0x00, 0x00]
+        // Frame: [0xA5, 0x40, 0x97, 0x08, 0x01, 0x81, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, CRC]
+        // CRC: 0xA5+0x40+0x97+0x08+0x01+0x81+0x00+0x00+0x00+0x00+0x00+0x00 = 518 = 0x0206 => 0x06
+        let bytes: [u8; 13] = [
+            0xA5, 0x40, 0x97, 0x08, 0x01, 0x81, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x06,
+        ];
+
+        let mut expected_state = vec![false; 16];
+        expected_state[0] = true; // Cell 0
+        expected_state[8] = true; // Cell 8
+        expected_state[15] = true; // Cell 15
+
+        match CellBalanceState::decode(&bytes, 16) {
+            Ok(decoded) => {
+                assert_eq!(decoded, expected_state);
+            }
+            Err(e) => panic!("Decoding failed: {:?}", e),
+        }
+    }
+
+    #[test]
+    fn test_cell_balance_state_decode_n_cells_less_than_byte_boundary() {
+        // n_cells = 5. Cell 0 and Cell 4 are balancing.
+        // Data byte 0: 0b00010001 = 0x11
+        // Frame: [0xA5, 0x40, 0x97, 0x08, 0x11, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, CRC]
+        // CRC: 0xA5+0x40+0x97+0x08+0x11+0x00+0x00+0x00+0x00+0x00+0x00+0x00 = 463 = 0x01CF => 0x95
+        let bytes: [u8; 13] = [
+            0xA5, 0x40, 0x97, 0x08, 0x11, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x95,
+        ];
+
+        let mut expected_state = vec![false; 5];
+        expected_state[0] = true; // Cell 0
+        expected_state[4] = true; // Cell 4
+
+        match CellBalanceState::decode(&bytes, 5) {
+            Ok(decoded) => {
+                assert_eq!(decoded, expected_state);
+            }
+            Err(e) => panic!("Decoding failed: {:?}", e),
+        }
+    }
+
+    #[test]
+    fn test_error_code_decode_valid() {
+        // Errors: CellVoltHighLevel1 (byte 4, bit 0), ChargeTempLowLevel2 (byte 5, bit 3), SocHighLevel1 (byte 6, bit 4), DiffTempLevel2 (byte 7, bit 3), AfeCollectChipErr (byte 9, bit 0)
+        // rx_buffer[4] = 0x01
+        // rx_buffer[5] = 0x08
+        // rx_buffer[6] = 0x10
+        // rx_buffer[7] = 0x08
+        // rx_buffer[8] = 0x00
+        // rx_buffer[9] = 0x01
+        // rx_buffer[10]= 0x00
+        // rx_buffer[11]= 0x00
+        // Frame: [0xA5, 0x40, 0x98, 0x08, 0x01, 0x08, 0x10, 0x08, 0x00, 0x01, 0x00, 0x00, CRC]
+        // CRC: 0xA5+0x40+0x98+0x08+0x01+0x08+0x10+0x08+0x00+0x01+0x00+0x00 = 423 = 0x01A7 => 0xA7
+        let bytes: [u8; 13] = [
+            0xA5, 0x40, 0x98, 0x08, 0x01, 0x08, 0x10, 0x08, 0x00, 0x01, 0x00, 0x00, 0xA7,
+        ];
+
+        let expected_errors = vec![
+            ErrorCode::CellVoltHighLevel1,
+            ErrorCode::ChargeTempLowLevel2,
+            ErrorCode::SocHighLevel1,
+            ErrorCode::DiffTempLevel2,
+            ErrorCode::AfeCollectChipErr,
+        ];
+
+        match ErrorCode::decode(&bytes) {
+            Ok(decoded) => {
+                assert_eq!(decoded.len(), expected_errors.len());
+                for err in expected_errors {
+                    assert!(decoded.contains(&err), "Missing error: {:?}", err);
+                }
+            }
+            Err(e) => panic!("Decoding failed: {:?}", e),
+        }
+    }
+
+    #[test]
+    fn test_error_code_decode_no_errors() {
+        // Frame: [0xA5, 0x40, 0x98, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, CRC]
+        // CRC: 0xA5+0x40+0x98+0x08+0x00+0x00+0x00+0x00+0x00+0x00+0x00+0x00 = 415 = 0x019F => 0x9F
+        let bytes: [u8; 13] = [
+            0xA5, 0x40, 0x98, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x85,
+        ];
+
+        match ErrorCode::decode(&bytes) {
+            Ok(decoded) => {
+                assert!(decoded.is_empty());
+            }
+            Err(e) => panic!("Decoding failed: {:?}", e),
+        }
+    }
+
+    // Request encoding tests
+    #[test]
+    fn test_soc_request() {
+        let expected_frame: [u8; 13] = [
+            0xA5, 0x40, 0x90, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x7D,
+        ];
+        assert_eq!(Soc::request(Address::Host), expected_frame);
+    }
+
+    #[test]
+    fn test_cell_voltage_range_request() {
+        // CMD = 0x91
+        // CRC = 0xA5+0x40+0x91+0x08 = 382 = 0x017E => 0x7E
+        let expected_frame: [u8; 13] = [
+            0xA5, 0x40, 0x91, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x7E,
+        ];
+        assert_eq!(CellVoltageRange::request(Address::Host), expected_frame);
+    }
+
+    #[test]
+    fn test_temperature_range_request() {
+        // CMD = 0x92
+        // CRC = 0xA5+0x40+0x92+0x08 = 383 = 0x017F => 0x7F
+        let expected_frame: [u8; 13] = [
+            0xA5, 0x40, 0x92, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x7F,
+        ];
+        assert_eq!(TemperatureRange::request(Address::Host), expected_frame);
+    }
+
+    #[test]
+    fn test_mosfet_status_request() {
+        // CMD = 0x93
+        // CRC = 0xA5+0x40+0x93+0x08 = 384 = 0x0180 => 0x80
+        let expected_frame: [u8; 13] = [
+            0xA5, 0x40, 0x93, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80,
+        ];
+        assert_eq!(MosfetStatus::request(Address::Host), expected_frame);
+    }
+
+    #[test]
+    fn test_status_request() {
+        // CMD = 0x94
+        // CRC = 0xA5+0x40+0x94+0x08 = 385 = 0x0181 => 0x81
+        let expected_frame: [u8; 13] = [
+            0xA5, 0x40, 0x94, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x81,
+        ];
+        assert_eq!(Status::request(Address::Host), expected_frame);
+    }
+
+    #[test]
+    fn test_cell_voltages_request() {
+        // CMD = 0x95
+        // CRC = 0xA5+0x40+0x95+0x08 = 386 = 0x0182 => 0x82
+        let expected_frame: [u8; 13] = [
+            0xA5, 0x40, 0x95, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x82,
+        ];
+        assert_eq!(CellVoltages::request(Address::Host), expected_frame);
+    }
+
+    #[test]
+    fn test_cell_temperatures_request() {
+        // CMD = 0x96
+        // CRC = 0xA5+0x40+0x96+0x08 = 387 = 0x0183 => 0x83
+        let expected_frame: [u8; 13] = [
+            0xA5, 0x40, 0x96, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x83,
+        ];
+        assert_eq!(CellTemperatures::request(Address::Host), expected_frame);
+    }
+
+    #[test]
+    fn test_cell_balance_state_request() {
+        // CMD = 0x97
+        // CRC = 0xA5+0x40+0x97+0x08 = 388 = 0x0184 => 0x84
+        let expected_frame: [u8; 13] = [
+            0xA5, 0x40, 0x97, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x84,
+        ];
+        assert_eq!(CellBalanceState::request(Address::Host), expected_frame);
+    }
+
+    #[test]
+    fn test_error_code_request() {
+        // CMD = 0x98
+        // CRC = 0xA5+0x40+0x98+0x08 = 389 = 0x0185 => 0x85
+        let expected_frame: [u8; 13] = [
+            0xA5, 0x40, 0x98, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x85,
+        ];
+        assert_eq!(ErrorCode::request(Address::Host), expected_frame);
+    }
+
+    #[test]
+    fn test_set_discharge_mosfet_request_enable() {
+        // CMD = 0xD9, Data[0] = 0x01
+        // CRC = 0xA5+0x40+0xD9+0x08+0x01 = 165+64+217+8+1 = 455 = 0x01C7 => 0xC7
+        let expected_frame: [u8; 13] = [
+            0xA5, 0x40, 0xD9, 0x08, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xC7,
+        ];
+        assert_eq!(
+            SetDischargeMosfet::request(Address::Host, true),
+            expected_frame
+        );
+    }
+
+    #[test]
+    fn test_set_discharge_mosfet_request_disable() {
+        // CMD = 0xD9, Data[0] = 0x00
+        // CRC = 0xA5+0x40+0xD9+0x08+0x00 = 165+64+217+8+0 = 454 = 0x01C6 => 0xC6
+        let expected_frame: [u8; 13] = [
+            0xA5, 0x40, 0xD9, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xC6,
+        ];
+        assert_eq!(
+            SetDischargeMosfet::request(Address::Host, false),
+            expected_frame
+        );
+    }
+
+    #[test]
+    fn test_set_charge_mosfet_request_enable() {
+        // CMD = 0xDA, Data[0] = 0x01
+        // CRC = 0xA5+0x40+0xDA+0x08+0x01 = 165+64+218+8+1 = 456 = 0x01C8 => 0xC8
+        let expected_frame: [u8; 13] = [
+            0xA5, 0x40, 0xDA, 0x08, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xC8,
+        ];
+        assert_eq!(
+            SetChargeMosfet::request(Address::Host, true),
+            expected_frame
+        );
+    }
+
+    #[test]
+    fn test_set_soc_request() {
+        // CMD = 0x21, SOC = 80.5% => 805 => 0x0325. Data[6]=0x03, Data[7]=0x25
+        // Frame: A5 40 21 08 00 00 00 00 00 00 03 25 CRC
+        // CRC: 0xA5+0x40+0x21+0x08+0x00+0x00+0x00+0x00+0x00+0x00+0x03+0x25 = 165+64+33+8+0+0+0+0+0+0+3+37 = 310 = 0x0136 => 0x36
+        let expected_frame: [u8; 13] = [
+            0xA5, 0x40, 0x21, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x25, 0x36,
+        ];
+        assert_eq!(SetSoc::request(Address::Host, 80.5), expected_frame);
+    }
+
+    #[test]
+    fn test_bms_reset_request() {
+        // CMD = 0x00
+        // CRC = 0xA5+0x40+0x00+0x08 = 165+64+0+8 = 237 = 0xED
+        let expected_frame: [u8; 13] = [
+            0xA5, 0x40, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xED,
+        ];
+        assert_eq!(BmsReset::request(Address::Host), expected_frame);
     }
 }

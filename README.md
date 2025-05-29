@@ -93,9 +93,8 @@ Here are some examples of how to use the `dalybms` tool. Replace `/dev/ttyUSB0` 
 
 *   Set the State of Charge (SOC) to 80.5%:
     ```bash
-    dalybms set-soc --soc-percent 80.5
+    dalybms set-soc 80.5
     ```
-    Note: The command in `src/main.rs` is `SetSoc { soc_percent: f32 }`, so the CLI argument is just the value. The help command `dalybms set-soc --help` confirms this.
 
 *   Enable the discharge MOSFET:
     ```bash
@@ -106,8 +105,6 @@ Here are some examples of how to use the `dalybms` tool. Replace `/dev/ttyUSB0` 
     ```bash
     dalybms set-discharge-mosfet
     ```
-    (Omitting `--enable` implies `--enable false` if the flag is an action, but `clap` by default for simple flags might require `--enable false`. Let's assume it defaults to false if not present, or the help would clarify. The `src/main.rs` uses `#[clap(long, short, action)]` which means presence implies true, absence implies false for `enable`.)
-    *Correction*: `#[clap(long, short, action)]` for a boolean flag means its presence sets it to true. To explicitly set it to false, you'd typically use `--enable=false` or rely on the default if the action implies a toggle or if there's a `--disable` counterpart. For this CLI, `action` means it's a store true flag, so its absence means false. So, `dalybms set-discharge-mosfet` (without `--enable`) should disable it.
 
 *   Enable the charge MOSFET:
     ```bash
@@ -118,7 +115,6 @@ Here are some examples of how to use the `dalybms` tool. Replace `/dev/ttyUSB0` 
     ```bash
     dalybms set-charge-mosfet 
     ```
-    (Same logic as `set-discharge-mosfet` applies)
 
 **4. Fetching All Information**
 
@@ -188,7 +184,7 @@ The synchronous client uses the `serialport` crate.
 **Feature flag required**: `serialport`
 
 ```rust
-use dalybms_lib::serialport::DalyBMS; // Corrected path
+use dalybms_lib::serialport::DalyBMS;
 use std::time::Duration;
 
 fn main() {
@@ -222,7 +218,7 @@ The asynchronous client uses `tokio` and `tokio-serial`.
 **Feature flag required**: `tokio-serial-async`
 
 ```rust
-use dalybms_lib::tokio_serial_async::DalyBMS; // Corrected path
+use dalybms_lib::tokio_serial_async::DalyBMS;
 use std::time::Duration;
 
 #[tokio::main]

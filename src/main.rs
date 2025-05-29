@@ -38,7 +38,7 @@ pub enum CliCommands {
     /// Set State of Charge (SOC) in percent
     SetSoc {
         /// The desired SOC value as a percentage (e.g., 75.5 for 75.5%)
-        soc_percent: f32
+        soc_percent: f32,
     },
     /// Enable or disable the discharge MOSFET
     SetDischargeMosfet {
