@@ -1,6 +1,6 @@
 use crate::Error;
 
-#[cfg(feature = "serde")]
+#[cfg(feature = "protocol_serde")] // Changed feature name
 use serde::{Deserialize, Serialize};
 
 /// Represents the sender/receiver address in a BMS command.
@@ -83,7 +83,7 @@ fn validate_checksum(buffer: &[u8]) -> std::result::Result<(), Error> {
 
 /// Represents the State of Charge (SOC) and related battery metrics.
 #[derive(Debug, Clone)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "protocol_serde", derive(Serialize, Deserialize))] // Changed feature name
 pub struct Soc {
     /// Total battery voltage in Volts.
     pub total_voltage: f32,
@@ -143,7 +143,7 @@ impl Soc {
 
 /// Represents the range of cell voltages (highest and lowest) in the battery pack.
 #[derive(Debug, Clone)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "protocol_serde", derive(Serialize, Deserialize))] // Changed feature name
 pub struct CellVoltageRange {
     /// Highest cell voltage in Volts.
     pub highest_voltage: f32,
@@ -203,7 +203,7 @@ impl CellVoltageRange {
 
 /// Represents the range of temperatures (highest and lowest) measured by the BMS.
 #[derive(Debug, Clone)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "protocol_serde", derive(Serialize, Deserialize))] // Changed feature name
 pub struct TemperatureRange {
     /// Highest temperature in degrees Celsius.
     pub highest_temperature: i8,
@@ -264,7 +264,7 @@ impl TemperatureRange {
 
 /// Represents the operational mode of the MOSFETs.
 #[derive(Debug, Clone)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "protocol_serde", derive(Serialize, Deserialize))] // Changed feature name
 pub enum MosfetMode {
     /// MOSFETs are stationary (neither charging nor discharging).
     Stationary,
@@ -276,7 +276,7 @@ pub enum MosfetMode {
 
 /// Represents the status of the MOSFETs and battery capacity.
 #[derive(Debug, Clone)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "protocol_serde", derive(Serialize, Deserialize))] // Changed feature name
 pub struct MosfetStatus {
     /// Current operational mode of the MOSFETs.
     pub mode: MosfetMode,
@@ -351,7 +351,7 @@ impl MosfetStatus {
 
 /// Represents the state of digital inputs (DI) and digital outputs (DO).
 #[derive(Debug, Clone)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "protocol_serde", derive(Serialize, Deserialize))] // Changed feature name
 pub struct IOState {
     /// State of digital input 1.
     pub di1: bool,
@@ -373,7 +373,7 @@ pub struct IOState {
 
 /// Represents various status information of the BMS.
 #[derive(Debug, Clone)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "protocol_serde", derive(Serialize, Deserialize))] // Changed feature name
 pub struct Status {
     /// Number of battery cells.
     pub cells: u8,
@@ -666,7 +666,7 @@ impl CellBalanceState {
 
 /// Represents various error codes and alarm states reported by the BMS.
 #[derive(Debug, Clone, thiserror::Error, PartialEq)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "protocol_serde", derive(Serialize, Deserialize))] // Changed feature name
 pub enum ErrorCode {
     /// Cell voltage too high (Level 1 Alarm).
     #[error("Cell voltage is too high level one alarm")]

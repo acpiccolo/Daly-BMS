@@ -151,6 +151,71 @@ Here are some examples of how to use the `dalybms` tool. Replace `/dev/ttyUSB0` 
 
 These examples should help you get started with using the `dalybms` command-line tool. Always refer to `dalybms --help` and `dalybms <subcommand> --help` for the most up-to-date options and parameters.
 
+## Daemon Mode
+
+The `dalybms` tool includes a daemon mode for continuous monitoring and data export, useful for logging BMS data over time or integrating with monitoring systems like Home Assistant via MQTT.
+
+### Overview
+
+Daemon mode runs persistently, fetching specified metrics from the BMS at regular intervals and outputting them to the console or an MQTT broker.
+
+### Command-Line Usage
+
+The basic command to start daemon mode is:
+```bash
+dalybms daemon [OPTIONS]
+```
+
+**Daemon Options:**
+
+*   `--output <console|mqtt>`: (Required) Specifies where to send the data.
+    *   `console`: Prints data to the standard output.
+    *   `mqtt`: Publishes data to an MQTT broker. Requires `mqtt.yaml` for configuration.
+*   `--interval <DURATION>`: Sets how often to fetch and report data. This is a duration string like "10s", "1m", "2h30m".
+    *   Default: "10s" (10 seconds).
+*   `--metrics <METRICS>`: A comma-separated list of specific metrics to collect.
+    *   Available metrics: `status`, `soc`, `voltages` (individual cell voltages), `temperatures` (individual sensor readings), `all`.
+    *   If `all` is included, all available metrics will be fetched.
+    *   Default: "soc,status" (Note: The current implementation of daemon mode primarily supports `status`, `soc`, `voltages`, `temperatures`, and `all`. Other metrics specified in a custom list might only be logged as "Fetching metric: <name>" without specific data parsing in the output yet).
+
+### MQTT Configuration (`mqtt.yaml`)
+
+When using `--output mqtt`, the tool requires a configuration file named `mqtt.yaml` in the root directory where you run the `dalybms` command.
+
+This file contains details for connecting to your MQTT broker:
+
+*   `server`: (String) MQTT broker server address or hostname.
+*   `port`: (Number) MQTT broker port (e.g., 1883 for unencrypted, 8883 for TLS). Default is 1883.
+*   `username`: (String, Optional) Username for MQTT authentication.
+*   `password`: (String, Optional) Password for MQTT authentication.
+*   `topic`: (String) Base MQTT topic to publish data to (e.g., "dalybms/data").
+*   `client_id`: (String, Optional) Custom client ID for this connection. If blank or omitted, a default ID (e.g., "dalybms-tool-<random_suffix>") will be generated.
+
+Please refer to the example `mqtt.yaml` file in the repository for exact formatting and more comments.
+
+### Daemon Mode Examples
+
+1.  **Console Output:** Fetch SOC and general status every 30 seconds and print to console.
+    ```bash
+    dalybms daemon --output console --interval 30s --metrics soc,status
+    ```
+
+2.  **MQTT Output:** Fetch all available metrics every 5 minutes and publish to an MQTT broker (ensure `mqtt.yaml` is configured).
+    ```bash
+    dalybms daemon --output mqtt --interval 5m --metrics all
+    ```
+
+    (You would also need an `mqtt.yaml` file in the same directory, for example:)
+    ```yaml
+    # mqtt.yaml
+    server: "your.mqtt.broker.com"
+    port: 1883
+    username: "your_username" # Optional
+    password: "your_password" # Optional
+    topic: "home/dalybms"
+    client_id: "dalybms_daemon_instance" # Optional
+    ```
+
 ## Library Usage
 
 This crate can also be used as a library (`dalybms_lib`) to interact with Daly BMS programmatically from your own Rust projects.
