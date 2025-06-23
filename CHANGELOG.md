@@ -2,6 +2,14 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+
+## [0.1.2](https://github.com/acpiccolo/Daly-BMS/compare/v0.1.1...v0.1.2) - 2025-06-23
+
+### Other
+
+- *(deps)* update flexi_logger requirement from 0.30 to 0.31
+- *(deps)* bump crate-ci/typos from 1.32.0 to 1.33.1
+
 ## [v0.1.1](https://github.com/acpiccolo/Daly-BMS/compare/3b3ffab5d7767bf6788b8c6db532b62e473fa330..v0.1.1) - 2025-05-29
 #### Build system
 - create release-plz.yml - ([60ac084](https://github.com/acpiccolo/Daly-BMS/commit/60ac084c0753152123114933f787932c6e8f22ff)) - acpiccolo
