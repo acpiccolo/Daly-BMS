@@ -3,15 +3,12 @@ use clap::{Parser, Subcommand};
 use clap_verbosity_flag::{InfoLevel, Verbosity};
 use flexi_logger::{Logger, LoggerHandle};
 use log::*;
-use std::{ops::Deref, panic, time::Duration};
-
-// Added import for Duration
-use std::time::Duration as StdDuration;
-use std::thread; // Added for std::thread::sleep
-use chrono::{Utc, Local}; // Explicitly import Utc for timestamp, Local for console
-use serde_json::json; // For MQTT payload construction
+use serde_json::json;
+use std::{ops::Deref, panic, time::Duration}; // For MQTT payload construction
 
 mod mqtt; // Added MQTT module
+
+const MQTT_CONFIG_FILE: &str = "mqtt.yaml";
 
 fn default_device_name() -> String {
     if cfg!(target_os = "windows") {
@@ -65,21 +62,33 @@ pub enum CliCommands {
     /// Run in daemon mode, periodically fetching and outputting metrics
     Daemon {
         /// Output destination for metrics
-        #[clap(value_parser = clap::value_parser!(DaemonOutput))]
+        #[command(subcommand)]
         output: DaemonOutput,
         /// Interval for fetching metrics (e.g., "10s", "1m")
         #[clap(long, short, value_parser = humantime::parse_duration, default_value = "10s")]
-        interval: StdDuration,
+        interval: Duration,
         /// Comma-separated list of metrics to fetch
-        #[clap(long, short, use_value_delimiter = true, default_value = "soc,voltage,current")]
+        #[clap(
+            long,
+            short,
+            use_value_delimiter = true,
+            default_value = "soc,voltage,current"
+        )]
         metrics: Vec<String>,
     },
 }
 
-#[derive(Debug, Clone, PartialEq, clap::ValueEnum)]
+#[derive(Subcommand, Debug, Clone, PartialEq)]
 pub enum DaemonOutput {
+    /// Continuously read metrics and print them to the standard output (console).
     Console,
-    Mqtt,
+    /// Continuously read metrics and publish them to an MQTT broker.
+    Mqtt {
+        /// Path to an optional YAML file for MQTT configuration.
+        /// If not provided, "mqtt.yaml" is loaded from the current directory.
+        #[arg(long, value_name = "PATH")]
+        mqtt_config_path: Option<String>,
+    },
 }
 
 const fn about_text() -> &'static str {
@@ -287,24 +296,19 @@ fn main() -> Result<()> {
 
             let mut mqtt_publisher: Option<mqtt::MqttPublisher> = None;
 
-            if output == DaemonOutput::Mqtt {
-                match mqtt::load_mqtt_config("mqtt.yaml") {
-                    Ok(config) => {
-                        info!("Successfully loaded MQTT config from mqtt.yaml: {:?}", config);
-                        match mqtt::MqttPublisher::new(config) {
-                            Ok(publisher) => {
-                                info!("MQTT Publisher created successfully.");
-                                mqtt_publisher = Some(publisher);
-                            }
-                            Err(e) => {
-                                error!("Failed to create MQTT publisher: {:?}. Will not publish.", e);
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        error!("Failed to load MQTT config from mqtt.yaml: {:?}. Will not publish.", e);
-                    }
-                }
+            if let DaemonOutput::Mqtt { mqtt_config_path } = &output {
+                let config_path_str = mqtt_config_path
+                    .clone()
+                    .unwrap_or_else(|| MQTT_CONFIG_FILE.to_string());
+
+                let config = mqtt::load_mqtt_config(&config_path_str).with_context(|| {
+                    format!("Failed to open MQTT config file at '{config_path_str}'")
+                })?;
+                info!("Successfully loaded MQTT config from {config_path_str}: {config:?}");
+                let publisher = mqtt::MqttPublisher::new(config)
+                    .with_context(|| "Failed to create MQTT publisher")?;
+                info!("MQTT Publisher created successfully.");
+                mqtt_publisher = Some(publisher);
             }
 
             loop {
@@ -324,7 +328,8 @@ fn main() -> Result<()> {
                 }
 
                 for metric_name in &metrics {
-                    if !fetch_all && metric_name == "all" { // already handled above if "all" is primary
+                    if !fetch_all && metric_name == "all" {
+                        // already handled above if "all" is primary
                         continue;
                     }
 
@@ -344,37 +349,43 @@ fn main() -> Result<()> {
                     }
                     if fetch_all || metric_name == "voltages" {
                         info!("Fetching metric: voltages");
-                        if fetched_status.is_none() && !fetch_all { // Ensure status is fetched if not already
+                        if fetched_status.is_none() && !fetch_all {
+                            // Ensure status is fetched if not already
                             info!("Fetching status first for cell voltages");
                             match bms.get_status() {
                                 Ok(status) => fetched_status = Some(status),
                                 Err(e) => error!("Error fetching status for voltages: {}", e),
                             }
                         }
-                        if fetched_status.is_some() || fetch_all { // Proceed if status available or if fetching all
+                        if fetched_status.is_some() || fetch_all {
+                            // Proceed if status available or if fetching all
                             match bms.get_cell_voltages() {
                                 Ok(voltages) => fetched_voltages = Some(voltages),
                                 Err(e) => error!("Error fetching cell voltages: {}", e),
                             }
-                        } else if !fetch_all { // only log if not covered by 'all' already
-                             error!("Skipping voltage fetch: status unavailable and not fetching all metrics.");
+                        } else if !fetch_all {
+                            // only log if not covered by 'all' already
+                            error!("Skipping voltage fetch: status unavailable and not fetching all metrics.");
                         }
                     }
                     if fetch_all || metric_name == "temperatures" {
                         info!("Fetching metric: temperatures");
-                        if fetched_status.is_none() && !fetch_all { // Ensure status is fetched if not already
+                        if fetched_status.is_none() && !fetch_all {
+                            // Ensure status is fetched if not already
                             info!("Fetching status first for cell temperatures");
                             match bms.get_status() {
                                 Ok(status) => fetched_status = Some(status),
                                 Err(e) => error!("Error fetching status for temperatures: {}", e),
                             }
                         }
-                        if fetched_status.is_some() || fetch_all { // Proceed if status available or if fetching all
+                        if fetched_status.is_some() || fetch_all {
+                            // Proceed if status available or if fetching all
                             match bms.get_cell_temperatures() {
                                 Ok(temps) => fetched_temperatures = Some(temps),
                                 Err(e) => error!("Error fetching cell temperatures: {}", e),
                             }
-                        } else if !fetch_all { // only log if not covered by 'all' already
+                        } else if !fetch_all {
+                            // only log if not covered by 'all' already
                             error!("Skipping temperature fetch: status unavailable and not fetching all metrics.");
                         }
                     }
@@ -388,46 +399,68 @@ fn main() -> Result<()> {
                     DaemonOutput::Console => {
                         println!("--- Data at {} ---", chrono::Local::now().to_rfc3339());
                         if let Some(status) = fetched_status {
-                            println!("Status: {:?}", status);
+                            println!("Status: {status:?}");
                         }
                         if let Some(soc) = fetched_soc {
-                            println!("SOC: {:?}", soc);
+                            println!("SOC: {soc:?}");
                         }
                         if let Some(voltages) = fetched_voltages {
-                            println!("Cell Voltages: {:?}", voltages);
+                            println!("Cell Voltages: {voltages:?}");
                         }
                         if let Some(temperatures) = fetched_temperatures {
-                            println!("Cell Temperatures: {:?}", temperatures);
+                            println!("Cell Temperatures: {temperatures:?}");
                         }
                         println!("--------------------------");
                     }
-                    DaemonOutput::Mqtt => {
+                    DaemonOutput::Mqtt { .. } => {
                         if let Some(publisher) = &mqtt_publisher {
                             let mut data_to_publish = serde_json::Map::new();
-                            data_to_publish.insert("timestamp".to_string(), json!(Utc::now().to_rfc3339()));
+                            data_to_publish.insert(
+                                "timestamp".to_string(),
+                                json!(chrono::Utc::now().to_rfc3339()),
+                            );
 
                             if let Some(status) = &fetched_status {
                                 match serde_json::to_value(status) {
-                                    Ok(val) => { data_to_publish.insert("status".to_string(), val); },
-                                    Err(e) => error!("Failed to serialize status to JSON value: {}", e),
+                                    Ok(val) => {
+                                        data_to_publish.insert("status".to_string(), val);
+                                    }
+                                    Err(e) => {
+                                        error!("Failed to serialize status to JSON value: {}", e)
+                                    }
                                 }
                             }
                             if let Some(soc) = &fetched_soc {
-                                 match serde_json::to_value(soc) {
-                                    Ok(val) => { data_to_publish.insert("soc".to_string(), val); },
-                                    Err(e) => error!("Failed to serialize soc to JSON value: {}", e),
+                                match serde_json::to_value(soc) {
+                                    Ok(val) => {
+                                        data_to_publish.insert("soc".to_string(), val);
+                                    }
+                                    Err(e) => {
+                                        error!("Failed to serialize soc to JSON value: {}", e)
+                                    }
                                 }
                             }
                             if let Some(voltages) = &fetched_voltages {
-                                 match serde_json::to_value(voltages) {
-                                    Ok(val) => { data_to_publish.insert("cell_voltages".to_string(), val); },
-                                    Err(e) => error!("Failed to serialize cell_voltages to JSON value: {}", e),
+                                match serde_json::to_value(voltages) {
+                                    Ok(val) => {
+                                        data_to_publish.insert("cell_voltages".to_string(), val);
+                                    }
+                                    Err(e) => error!(
+                                        "Failed to serialize cell_voltages to JSON value: {}",
+                                        e
+                                    ),
                                 }
                             }
                             if let Some(temperatures) = &fetched_temperatures {
-                                 match serde_json::to_value(temperatures) {
-                                    Ok(val) => { data_to_publish.insert("cell_temperatures".to_string(), val); },
-                                    Err(e) => error!("Failed to serialize cell_temperatures to JSON value: {}", e),
+                                match serde_json::to_value(temperatures) {
+                                    Ok(val) => {
+                                        data_to_publish
+                                            .insert("cell_temperatures".to_string(), val);
+                                    }
+                                    Err(e) => error!(
+                                        "Failed to serialize cell_temperatures to JSON value: {}",
+                                        e
+                                    ),
                                 }
                             }
 
@@ -435,7 +468,10 @@ fn main() -> Result<()> {
                             if data_to_publish.len() > 1 {
                                 match serde_json::to_string(&data_to_publish) {
                                     Ok(json_payload) => {
-                                        info!("MQTT output: Attempting to publish data: {}", json_payload);
+                                        info!(
+                                            "MQTT output: Attempting to publish data: {}",
+                                            json_payload
+                                        );
                                         if let Err(e) = publisher.publish(&json_payload) {
                                             error!("Failed to publish data to MQTT: {:?}", e);
                                         } else {
@@ -454,7 +490,7 @@ fn main() -> Result<()> {
                         }
                     }
                 }
-                thread::sleep(interval);
+                std::thread::sleep(interval);
             }
         }
     }
@@ -465,9 +501,8 @@ fn main() -> Result<()> {
 #[cfg(test)]
 mod tests {
     // use super::*; // Removed as items like default_bms_status are local or directly imported
-    use dalybms_lib::protocol::{Status as BmsStatus, Soc as BmsSoc, IOState};
+    use dalybms_lib::protocol::{IOState, Soc as BmsSoc, Status as BmsStatus};
     use serde_json::{json, Value as JsonValue};
-    use chrono::Utc;
 
     // Helper to create a default BmsStatus for tests
     fn default_bms_status() -> BmsStatus {
@@ -477,8 +512,14 @@ mod tests {
             charger_running: false,
             load_running: true,
             states: IOState {
-                di1: false, di2: false, di3: false, di4: false,
-                do1: true, do2: false, do3: false, do4: false,
+                di1: false,
+                di2: false,
+                di3: false,
+                di4: false,
+                do1: true,
+                do2: false,
+                do3: false,
+                do4: false,
             },
             cycles: 123,
         }
@@ -501,7 +542,7 @@ mod tests {
         let cell_temperatures = Some(vec![25, 26]); // Example temperatures
 
         let mut data_to_publish_map = serde_json::Map::new();
-        let timestamp = Utc::now().to_rfc3339();
+        let timestamp = chrono::Utc::now().to_rfc3339();
         data_to_publish_map.insert("timestamp".to_string(), json!(timestamp));
 
         if let Some(status) = &bms_status {
@@ -511,10 +552,16 @@ mod tests {
             data_to_publish_map.insert("soc".to_string(), serde_json::to_value(soc).unwrap());
         }
         if let Some(voltages) = &cell_voltages {
-            data_to_publish_map.insert("cell_voltages".to_string(), serde_json::to_value(voltages).unwrap());
+            data_to_publish_map.insert(
+                "cell_voltages".to_string(),
+                serde_json::to_value(voltages).unwrap(),
+            );
         }
         if let Some(temperatures) = &cell_temperatures {
-            data_to_publish_map.insert("cell_temperatures".to_string(), serde_json::to_value(temperatures).unwrap());
+            data_to_publish_map.insert(
+                "cell_temperatures".to_string(),
+                serde_json::to_value(temperatures).unwrap(),
+            );
         }
 
         let json_payload_result = serde_json::to_string(&data_to_publish_map);
@@ -532,7 +579,10 @@ mod tests {
         assert_eq!(parsed_value["cell_voltages"].as_array().unwrap().len(), 4);
         assert_eq!(parsed_value["cell_voltages"][0], 3.301);
         assert!(parsed_value["cell_temperatures"].is_array());
-        assert_eq!(parsed_value["cell_temperatures"].as_array().unwrap().len(), 2);
+        assert_eq!(
+            parsed_value["cell_temperatures"].as_array().unwrap().len(),
+            2
+        );
         assert_eq!(parsed_value["cell_temperatures"][0], 25);
     }
 
@@ -544,10 +594,11 @@ mod tests {
         let _cell_temperatures: Option<Vec<i32>> = None;
 
         let mut data_to_publish_map = serde_json::Map::new();
-        let timestamp = Utc::now().to_rfc3339();
+        let timestamp = chrono::Utc::now().to_rfc3339();
         data_to_publish_map.insert("timestamp".to_string(), json!(timestamp));
 
-        if let Some(status) = &bms_status { // This will be false
+        if let Some(status) = &bms_status {
+            // This will be false
             data_to_publish_map.insert("status".to_string(), serde_json::to_value(status).unwrap());
         }
         if let Some(soc) = &bms_soc {
@@ -575,7 +626,7 @@ mod tests {
         assert_eq!(parsed_value.as_object().unwrap().keys().count(), 2);
     }
 
-     #[test]
+    #[test]
     fn test_serialize_bms_data_empty() {
         // Test when no actual BMS data is available, only timestamp
         let bms_status: Option<BmsStatus> = None;
@@ -584,15 +635,15 @@ mod tests {
         let _cell_temperatures: Option<Vec<i32>> = None; // Prefixed with underscore
 
         let mut data_to_publish_map = serde_json::Map::new();
-        let timestamp = Utc::now().to_rfc3339();
+        let timestamp = chrono::Utc::now().to_rfc3339();
         data_to_publish_map.insert("timestamp".to_string(), json!(timestamp));
 
         // No data is added beyond timestamp
         if let Some(status) = &bms_status {
-             data_to_publish_map.insert("status".to_string(), serde_json::to_value(status).unwrap());
+            data_to_publish_map.insert("status".to_string(), serde_json::to_value(status).unwrap());
         }
         if let Some(soc) = &bms_soc {
-             data_to_publish_map.insert("soc".to_string(), serde_json::to_value(soc).unwrap());
+            data_to_publish_map.insert("soc".to_string(), serde_json::to_value(soc).unwrap());
         }
         // etc for others
 

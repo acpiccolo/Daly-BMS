@@ -16,15 +16,15 @@ path = "src/main.rs"
 required-features = ["bin-dependencies"]
 
 [features]
-default = ["bin-dependencies"] # Removed serde = ["dep:serde"]
+default = ["bin-dependencies"]
 serialport = ["dep:serialport"]
 tokio-serial-async = ["dep:tokio-serial", "tokio/time", "tokio/io-util"]
-protocol_serde = [] # Feature for enabling serde in the library part
+serde = ["dep:serde"]
 
 bin-dependencies = [
     "dep:anyhow",
-    "serialport", # This enables the 'serialport' feature for the library
-    "protocol_serde", # This enables the 'protocol_serde' feature for the library
+    "serialport",
+    "serde",
     "clap/derive",
     "dep:clap-verbosity-flag",
     "dep:clap-num",
@@ -40,9 +40,9 @@ bin-dependencies = [
 [dependencies]
 thiserror = "2"
 log = { version = "0.4" }
-serde = { version = "1", features = ["derive"] } # No longer optional
+serde = { version = "1", features = ["derive"], optional = true }
 serde_yaml = { version = "0.9", optional = true }
-rumqttc = { version = "0.22.0", optional = true } # No explicit features
+rumqttc = { version = "0.24", optional = true }
 serialport = { version = "4", optional = true }
 tokio-serial = { version = "5", optional = true }
 tokio = { version = "1", default-features = false, optional = true }
@@ -52,11 +52,10 @@ clap = { version = "4", optional = true }
 clap-verbosity-flag = { version = "3", optional = true }
 clap-num = { version = "1", optional = true }
 humantime = { version = "2", optional = true }
-flexi_logger = { version = "0.29.0", optional = true }
+flexi_logger = { version = "0.31", optional = true }
 chrono = { version = "0.4", features = ["serde"], optional = true }
-rand = { version = "0.8", optional = true }
+rand = { version = "0.9", optional = true }
 serde_json = { version = "1.0", optional = true }
-# Note: rumqttc and serde_yaml are already added above with optional = true
 
 [package.metadata.cargo-machete]
 ignored = ["clap-num"]

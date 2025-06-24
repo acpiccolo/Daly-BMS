@@ -1,9 +1,9 @@
+use anyhow::{Context, Result};
+use log::{info, warn};
+use rumqttc::{Client, MqttOptions, QoS};
 use serde::Deserialize; // Reverted to normal path
 use std::fs;
-use std::time::Duration;
-use anyhow::{Context, Result};
-use rumqttc::{Client, MqttOptions, QoS};
-use log::{info, warn}; // Added for logging
+use std::time::Duration; // Added for logging
 
 #[derive(Debug, Deserialize, Clone)] // Added Clone for storing config
 pub struct MqttConfig {
@@ -27,9 +27,9 @@ fn default_client_id_prefix() -> Option<String> {
 
 pub fn load_mqtt_config(path: &str) -> Result<MqttConfig> {
     let content = fs::read_to_string(path)
-        .with_context(|| format!("Failed to read MQTT config file from path: {}", path))?;
+        .with_context(|| format!("Failed to read MQTT config file from path: {path}"))?;
     let config: MqttConfig = serde_yaml::from_str(&content)
-        .with_context(|| format!("Failed to parse MQTT config from file: {}", path))?;
+        .with_context(|| format!("Failed to parse MQTT config from file: {path}"))?;
     Ok(config)
 }
 
@@ -44,12 +44,20 @@ impl MqttPublisher {
     }
 
     pub fn publish(&self, payload: &str) -> Result<()> {
-        let mut client_id = self.config.client_id.clone().filter(|id| !id.is_empty())
-            .unwrap_or_else(|| default_client_id_prefix().unwrap_or_else(|| "dalybms-rs".to_string()));
+        let mut client_id = self
+            .config
+            .client_id
+            .clone()
+            .filter(|id| !id.is_empty())
+            .unwrap_or_else(|| {
+                default_client_id_prefix().unwrap_or_else(|| "dalybms-rs".to_string())
+            });
 
         // Append a random suffix if the default prefix was used or if client_id was None
-        if self.config.client_id.is_none() || self.config.client_id.as_deref() == Some("dalybms-tool") {
-             client_id = format!("{}-{}", client_id, generate_random_string(8));
+        if self.config.client_id.is_none()
+            || self.config.client_id.as_deref() == Some("dalybms-tool")
+        {
+            client_id = format!("{}-{}", client_id, generate_random_string(8));
         }
 
         let mut mqttoptions = MqttOptions::new(client_id, &self.config.server, self.config.port);
@@ -77,8 +85,10 @@ impl MqttPublisher {
             // If issues, will need to adjust MqttOptions setup for TLS.
         }
 
-
-        info!("Attempting to connect to MQTT broker: {}:{}", self.config.server, self.config.port);
+        info!(
+            "Attempting to connect to MQTT broker: {}:{}",
+            self.config.server, self.config.port
+        );
         let (mut client, mut connection) = Client::new(mqttoptions, 10);
 
         // The event loop needs to be polled for the connection to work and messages to be acknowledged.
@@ -104,28 +114,36 @@ impl MqttPublisher {
         // This is a common pattern for tools that publish intermittently.
 
         let topic = &self.config.topic;
-        client.publish(topic, QoS::AtLeastOnce, false, payload.as_bytes())
-            .with_context(|| format!("Failed to publish message to MQTT topic: {}", topic))?;
+        client
+            .publish(topic, QoS::AtLeastOnce, false, payload.as_bytes())
+            .with_context(|| format!("Failed to publish message to MQTT topic: {topic}"))?;
         info!("Published message to topic: {}", topic);
 
         // Poll the event loop a few times to allow the client to process the publish
         // and handle any immediate responses or errors.
-        for _ in 0..5 { // Arbitrary number of polls
+        for _ in 0..5 {
+            // Arbitrary number of polls
             match connection.recv_timeout(Duration::from_millis(10)) {
                 Ok(_notification) => {
                     // Process notification if needed, for publish usually not critical unless checking for PubAck
                     // info!("MQTT Notification: {:?}", _notification);
                     // Potentially break if a relevant ack is received, or just continue polling.
                 }
-                Err(e) => { // More generic error handling for the poll
-                    warn!("Error/Timeout during MQTT connection poll after publish: {:?}", e);
+                Err(e) => {
+                    // More generic error handling for the poll
+                    warn!(
+                        "Error/Timeout during MQTT connection poll after publish: {:?}",
+                        e
+                    );
                     // Break on any error or timeout during this brief poll.
                     break;
                 }
             }
         }
 
-        client.disconnect().with_context(|| "Failed to disconnect MQTT client")?;
+        client
+            .disconnect()
+            .with_context(|| "Failed to disconnect MQTT client")?;
         info!("Disconnected from MQTT broker.");
 
         Ok(())
@@ -135,10 +153,10 @@ impl MqttPublisher {
 fn generate_random_string(len: usize) -> String {
     use rand::Rng;
     const CHARSET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     (0..len)
         .map(|_| {
-            let idx = rng.gen_range(0..CHARSET.len());
+            let idx = rng.random_range(0..CHARSET.len());
             CHARSET[idx] as char
         })
         .collect()
