@@ -1,7 +1,9 @@
 use anyhow::{Context, Result};
 use log::{info, warn};
-use rumqttc::{Client, MqttOptions, QoS};
-use serde::Deserialize; // Reverted to normal path
+use paho_mqtt::{
+    Client, ConnectOptionsBuilder, CreateOptionsBuilder, MessageBuilder, QoS,
+};
+use serde::Deserialize;
 use std::fs;
 use std::time::Duration; // Added for logging
 
@@ -44,7 +46,7 @@ impl MqttPublisher {
     }
 
     pub fn publish(&self, payload: &str) -> Result<()> {
-        let mut client_id = self
+        let mut client_id_base = self
             .config
             .client_id
             .clone()
@@ -53,96 +55,83 @@ impl MqttPublisher {
                 default_client_id_prefix().unwrap_or_else(|| "dalybms-rs".to_string())
             });
 
-        // Append a random suffix if the default prefix was used or if client_id was None
+        // Append a random suffix if the default prefix was used or if client_id was None/empty
         if self.config.client_id.is_none()
             || self.config.client_id.as_deref() == Some("dalybms-tool")
+            || self.config.client_id.as_deref() == Some("")
         {
-            client_id = format!("{}-{}", client_id, generate_random_string(8));
+            client_id_base = format!("{}-{}", client_id_base, generate_random_string(8));
         }
+        let client_id = client_id_base; // Final client_id
 
-        let mut mqttoptions = MqttOptions::new(client_id, &self.config.server, self.config.port);
-        mqttoptions.set_keep_alive(Duration::from_secs(5));
+        // Construct server URI, always TCP for non-SSL
+        let server_uri = format!("tcp://{}:{}", self.config.server, self.config.port);
+
+        let create_opts = CreateOptionsBuilder::new()
+            .server_uri(&server_uri)
+            .client_id(&client_id)
+            .persistence(None) // In-memory persistence
+            .finalize();
+
+        let client = Client::new(create_opts)
+            .with_context(|| format!("Error creating MQTT client for server: {}", server_uri))?;
+
+        let mut conn_opts_builder = ConnectOptionsBuilder::new();
+        conn_opts_builder.keep_alive_interval(Duration::from_secs(20)); // Paho default is 60s, rumqttc was 5s
+        // conn_opts_builder.automatic_reconnect(false); // Explicitly disable auto-reconnect for publish-once
+        // For paho-mqtt 0.13.3, automatic_reconnect takes two Durations (min, max retry interval)
+        // Default is disabled, so commenting it out achieves the desired behavior for publish-once.
 
         if let (Some(username), Some(password)) = (&self.config.username, &self.config.password) {
-            mqttoptions.set_credentials(username, password);
+            conn_opts_builder.user_name(username);
+            conn_opts_builder.password(password);
         } else if self.config.username.is_some() {
             warn!("MQTT username provided without a password. Connecting without authentication.");
         }
 
-        // Enable TCP transport encryption if server is "ssl://..." or similar
-        // This is a basic check, real-world might need more robust parsing or explicit config field
-        if self.config.server.starts_with("ssl://") || self.config.server.starts_with("mqtts://") {
-            // The server string should be just the host then, e.g. "test.mosquitto.org"
-            // For now, rumqttc handles this if the server address is correct and compiled with TLS features.
-            // We might need to add `native-tls` or `rustls` feature to rumqttc if not default.
-            // Assuming `rumqttc` is built with TLS support for this example.
-            // If using `ssl://` prefix, `rumqttc` might expect `host` without prefix for `MqttOptions::new`
-            // and then use `set_transport(Transport::tls(...))`
-            // For now, let's assume the user provides the correct host and port, and if TLS is needed,
-            // it's handled by the server string or a more explicit config later.
-            // The `rumqttc` simple example uses host directly and TLS is often a feature flag.
-            // For this iteration, we won't explicitly set Transport::tls unless issues arise.
-            // If issues, will need to adjust MqttOptions setup for TLS.
-        }
+        // SSL Options removed
+        // if use_ssl {
+        //     let ssl_options = SslOptionsBuilder::new()
+        //         // .trust_store("certs/ca.crt")? // Example: if you need custom CA
+        //         // .key_store("certs/client.crt")?
+        //         // .private_key("certs/client.key")?
+        //         .enable_server_cert_auth(true) // Validate server certificate
+        //         .verify(true) // Verify server hostname
+        //         .finalize();
+        //     conn_opts_builder.ssl_options(ssl_options);
+        // }
+
+        let conn_opts = conn_opts_builder.finalize();
 
         info!(
-            "Attempting to connect to MQTT broker: {}:{}",
-            self.config.server, self.config.port
+            "Attempting to connect to MQTT broker: {} with client_id: {}",
+            server_uri, client_id
         );
-        let (mut client, mut connection) = Client::new(mqttoptions, 10);
 
-        // The event loop needs to be polled for the connection to work and messages to be acknowledged.
-        // In a sync context for a simple publish, we can make a few iterations.
-        // This is a point from documentation: "Connection hosts its own thread via connect method."
-        // "Client is a handle to work with the connection thread."
-        // For the synchronous client, `Client::new` creates a client and an eventloop (`connection`).
-        // The `connection.iter()` or manual poll is essential.
-
-        // A simple way for "publish and forget" without a dedicated thread for eventloop:
-        // 1. Connect (implicitly done by Client::new + first poll)
-        // 2. Publish
-        // 3. Wait a very short moment for publish to go through (e.g. by polling a few times or a small sleep)
-        // 4. Disconnect
-
-        // According to rumqttc docs, for sync client:
-        // "The event loop is usually iterated until 'Disconnected' event is received."
-        // "publish() might block if outgoing buffer is full."
-        // For a robust single publish, we should ensure the event loop runs a bit.
-
-        // Let's try to publish and then explicitly poll the connection a few times to ensure
-        // the message is sent and connection handles its state, then disconnect.
-        // This is a common pattern for tools that publish intermittently.
+        client
+            .connect(conn_opts)
+            .with_context(|| "Failed to connect to MQTT broker")?;
+        info!("Connected to MQTT broker.");
 
         let topic = &self.config.topic;
-        client
-            .publish(topic, QoS::AtLeastOnce, false, payload.as_bytes())
-            .with_context(|| format!("Failed to publish message to MQTT topic: {topic}"))?;
-        info!("Published message to topic: {}", topic);
-
-        // Poll the event loop a few times to allow the client to process the publish
-        // and handle any immediate responses or errors.
-        for _ in 0..5 {
-            // Arbitrary number of polls
-            match connection.recv_timeout(Duration::from_millis(10)) {
-                Ok(_notification) => {
-                    // Process notification if needed, for publish usually not critical unless checking for PubAck
-                    // info!("MQTT Notification: {:?}", _notification);
-                    // Potentially break if a relevant ack is received, or just continue polling.
-                }
-                Err(e) => {
-                    // More generic error handling for the poll
-                    warn!(
-                        "Error/Timeout during MQTT connection poll after publish: {:?}",
-                        e
-                    );
-                    // Break on any error or timeout during this brief poll.
-                    break;
-                }
-            }
-        }
+        let msg = MessageBuilder::new()
+            .topic(topic)
+            .payload(payload)
+            .qos(QoS::AtLeastOnce)
+            .retained(false)
+            .finalize();
 
         client
-            .disconnect()
+            .publish(msg)
+            .with_context(|| format!("Failed to publish message to MQTT topic: {}", topic))?;
+
+        info!("Message published to topic: {}. For QoS > 0, sync client typically waits for ack.", topic);
+        // With paho-mqtt sync client, for QoS 1 and 2, publish() blocks until the handshake is complete.
+        // So, if publish returns Ok(()), the message has been acknowledged by the broker.
+        // No explicit delivery_token.wait_for_completion_timeout() is needed here.
+
+        client
+            .disconnect(None) // None uses default disconnect options (e.g., 10 sec timeout)
             .with_context(|| "Failed to disconnect MQTT client")?;
         info!("Disconnected from MQTT broker.");
 
@@ -152,13 +141,12 @@ impl MqttPublisher {
 
 fn generate_random_string(len: usize) -> String {
     use rand::Rng;
-    const CHARSET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-    let mut rng = rand::rng();
-    (0..len)
-        .map(|_| {
-            let idx = rng.random_range(0..CHARSET.len());
-            CHARSET[idx] as char
-        })
+    use rand::distr::Alphanumeric;
+
+    rand::thread_rng()
+        .sample_iter(&Alphanumeric)
+        .take(len)
+        .map(char::from)
         .collect()
 }
 
