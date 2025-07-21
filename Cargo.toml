@@ -16,24 +16,33 @@ path = "src/main.rs"
 required-features = ["bin-dependencies"]
 
 [features]
-serde = ["dep:serde"]
 default = ["bin-dependencies"]
 serialport = ["dep:serialport"]
 tokio-serial-async = ["dep:tokio-serial", "tokio/time", "tokio/io-util"]
+serde = ["dep:serde"]
+
 bin-dependencies = [
     "dep:anyhow",
     "serialport",
+    "serde",
     "clap/derive",
     "dep:clap-verbosity-flag",
     "dep:clap-num",
     "dep:humantime",
     "dep:flexi_logger",
+    "dep:chrono",
+    "dep:paho-mqtt",
+    "dep:serde_yaml",
+    "dep:rand",
+    "dep:serde_json",
 ]
 
 [dependencies]
 thiserror = "2"
 log = { version = "0.4" }
 serde = { version = "1", features = ["derive"], optional = true }
+serde_yaml = { version = "0.9", optional = true }
+paho-mqtt = { version = "0.13.3", optional = true, default-features = false, features = ["bundled"] }
 serialport = { version = "4", optional = true }
 tokio-serial = { version = "5", optional = true }
 tokio = { version = "1", default-features = false, optional = true }
@@ -44,6 +53,12 @@ clap-verbosity-flag = { version = "3", optional = true }
 clap-num = { version = "1", optional = true }
 humantime = { version = "2", optional = true }
 flexi_logger = { version = "0.31", optional = true }
+chrono = { version = "0.4", features = ["serde"], optional = true }
+ rand = { version = "0.9", optional = true }
+serde_json = { version = "1.0", optional = true }
 
 [package.metadata.cargo-machete]
 ignored = ["clap-num"]
+
+[dev-dependencies]
+tempfile = "3"
