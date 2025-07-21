@@ -3,6 +3,12 @@ All notable changes to this project will be documented in this file. See [conven
 
 - - -
 
+## [0.1.3](https://github.com/acpiccolo/Daly-BMS/compare/v0.1.2...v0.1.3) - 2025-07-21
+
+### Added
+
+- add daemon mode ([#46](https://github.com/acpiccolo/Daly-BMS/pull/46))
+
 ## [0.1.2](https://github.com/acpiccolo/Daly-BMS/compare/v0.1.1...v0.1.2) - 2025-06-23
 
 ### Other
