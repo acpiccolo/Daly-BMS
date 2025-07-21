@@ -184,7 +184,7 @@ When using `--output mqtt`, the tool requires a configuration file named `mqtt.y
 
 This file contains details for connecting to your MQTT broker:
 
-*   `uri`: (String) MQTT broker server uri (e.g., tcp://localhost:1883).
+*   `uri`: (String) MQTT broker server uri (e.g., mqtt://localhost:1883).
 *   `username`: (String, Optional) Username for MQTT authentication.
 *   `password`: (String, Optional) Password for MQTT authentication.
 *   `topic`: (String, Optional) Base MQTT topic to publish data to. Defaults to "dalybms" if not set.
@@ -208,7 +208,7 @@ Please refer to the example `mqtt.yaml` file in the repository for exact formatt
     (You would also need an `mqtt.yaml` file in the same directory, for example:)
     ```yaml
     # mqtt.yaml
-    uri: "tcp://localhost:1883"
+    uri: "mqtt://localhost:1883"
     username: "your_username" # Optional
     password: "your_password" # Optional
     topic: "dalybms" # Optional
