@@ -1,9 +1,11 @@
 # MQTT Broker configuration for Daly BMS Tool
-# Server address or hostname of your MQTT broker
-server: "localhost"
+#
+# This file allows you to configure MQTT connection parameters.
+# All MQTT settings are now exclusively configured via this file.
 
-# Port number for the MQTT broker (default is 1883 for unencrypted MQTT)
-port: 1883
+# URI of the MQTT broker (Mandatory).
+# Example: "mqtt://localhost:1883" or "mqtts://secure-broker.com:8883"
+uri: "mqtt://localhost:1883"
 
 # Username for MQTT broker authentication (leave blank or comment out if not needed)
 username: "" # "your_mqtt_username"
@@ -14,8 +16,8 @@ password: "" # "your_mqtt_password"
 # Base MQTT topic to publish BMS data to
 # The tool will publish data to subtopics under this base topic,
 # or directly to this topic if specific metric subtopics are not implemented yet.
-topic: "dalybms/data"
+topic: "dalybms"
 
 # Client ID for the MQTT connection.
-# If commented out or left blank, a default ID will be generated (e.g., "dalybms-tool-<random_suffix>").
-# client_id: "dalybms_client_1"
+# If commented out or left blank, a default ID will be generated (e.g., "dalybms-<random_suffix>").
+# client_id: "dalybms-client_1"

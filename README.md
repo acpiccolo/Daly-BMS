@@ -184,12 +184,12 @@ When using `--output mqtt`, the tool requires a configuration file named `mqtt.y
 
 This file contains details for connecting to your MQTT broker:
 
-*   `server`: (String) MQTT broker server address or hostname.
-*   `port`: (Number) MQTT broker port (e.g., 1883 for unencrypted, 8883 for TLS). Default is 1883.
+*   `uri`: (String) MQTT broker server uri (e.g., tcp://localhost:1883).
 *   `username`: (String, Optional) Username for MQTT authentication.
 *   `password`: (String, Optional) Password for MQTT authentication.
-*   `topic`: (String) Base MQTT topic to publish data to (e.g., "dalybms/data").
-*   `client_id`: (String, Optional) Custom client ID for this connection. If blank or omitted, a default ID (e.g., "dalybms-tool-<random_suffix>") will be generated.
+*   `topic`: (String, Optional) Base MQTT topic to publish data to. Defaults to "dalybms" if not set.
+*   `qos` (Integer, Optional): MQTT Quality of Service level (0, 1, or 2). Defaults to 0 if not set.
+*   `client_id`: (String, Optional) Custom client ID for this connection. If blank or omitted, a default ID (e.g., "dalybms-<random_suffix>") will be generated.
 
 Please refer to the example `mqtt.yaml` file in the repository for exact formatting and more comments.
 
@@ -208,12 +208,11 @@ Please refer to the example `mqtt.yaml` file in the repository for exact formatt
     (You would also need an `mqtt.yaml` file in the same directory, for example:)
     ```yaml
     # mqtt.yaml
-    server: "your.mqtt.broker.com"
-    port: 1883
+    uri: "tcp://localhost:1883"
     username: "your_username" # Optional
     password: "your_password" # Optional
-    topic: "home/dalybms"
-    client_id: "dalybms_daemon_instance" # Optional
+    topic: "dalybms" # Optional
+    client_id: "dalybms_1" # Optional
     ```
 
 ## Library Usage

@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
 use clap_verbosity_flag::{InfoLevel, Verbosity};
 use flexi_logger::{Logger, LoggerHandle};
@@ -67,13 +67,8 @@ pub enum CliCommands {
         /// Interval for fetching metrics (e.g., "10s", "1m")
         #[clap(long, short, value_parser = humantime::parse_duration, default_value = "10s")]
         interval: Duration,
-        /// Comma-separated list of metrics to fetch
-        #[clap(
-            long,
-            short,
-            use_value_delimiter = true,
-            default_value = "soc,voltage,current"
-        )]
+        /// Comma-separated list of metrics to fetch (e.g., status,soc,voltages,temperatures or all)
+        #[clap(long, short, use_value_delimiter = true, default_value = "status,soc")]
         metrics: Vec<String>,
     },
 }
@@ -314,8 +309,13 @@ fn main() -> Result<()> {
             loop {
                 let mut fetched_status = None;
                 let mut fetched_soc = None;
-                let mut fetched_voltages = None;
-                let mut fetched_temperatures = None;
+                let mut fetched_mosfet = None;
+                let mut fetched_voltage_range = None;
+                let mut fetched_temperature_range = None;
+                let mut fetched_cell_voltages = None;
+                let mut fetched_cell_temperatures = None;
+                let mut fetched_balancing = None;
+                let mut fetched_errors = None;
 
                 let fetch_all = metrics.iter().any(|m| m == "all");
 
@@ -327,6 +327,7 @@ fn main() -> Result<()> {
                     // For simplicity, we'll just use the fetch_all flag in subsequent checks.
                 }
 
+                let mut found_metric_name = false;
                 for metric_name in &metrics {
                     if !fetch_all && metric_name == "all" {
                         // already handled above if "all" is primary
@@ -335,6 +336,7 @@ fn main() -> Result<()> {
 
                     if fetch_all || metric_name == "status" {
                         info!("Fetching metric: status");
+                        found_metric_name = true;
                         match bms.get_status() {
                             Ok(status) => fetched_status = Some(status),
                             Err(e) => error!("Error fetching status: {}", e),
@@ -342,56 +344,104 @@ fn main() -> Result<()> {
                     }
                     if fetch_all || metric_name == "soc" {
                         info!("Fetching metric: soc");
+                        found_metric_name = true;
                         match bms.get_soc() {
                             Ok(soc) => fetched_soc = Some(soc),
                             Err(e) => error!("Error fetching SOC: {}", e),
                         }
                     }
-                    if fetch_all || metric_name == "voltages" {
-                        info!("Fetching metric: voltages");
+                    if fetch_all || metric_name == "mosfet" {
+                        info!("Fetching metric: mosfet");
+                        found_metric_name = true;
+                        match bms.get_mosfet_status() {
+                            Ok(range) => fetched_mosfet = Some(range),
+                            Err(e) => error!("Error fetching mosfet: {}", e),
+                        }
+                    }
+                    if fetch_all || metric_name == "voltage-range" {
+                        info!("Fetching metric: voltage-range");
+                        found_metric_name = true;
+                        match bms.get_cell_voltage_range() {
+                            Ok(range) => fetched_voltage_range = Some(range),
+                            Err(e) => error!("Error fetching voltage-range: {}", e),
+                        }
+                    }
+                    if fetch_all || metric_name == "temperature-range" {
+                        info!("Fetching metric: temperature-range");
+                        found_metric_name = true;
+                        match bms.get_temperature_range() {
+                            Ok(range) => fetched_temperature_range = Some(range),
+                            Err(e) => error!("Error fetching temperature-range: {}", e),
+                        }
+                    }
+                    if fetch_all || metric_name == "cell-voltages" {
+                        info!("Fetching metric: cell-voltages");
+                        found_metric_name = true;
                         if fetched_status.is_none() && !fetch_all {
                             // Ensure status is fetched if not already
-                            info!("Fetching status first for cell voltages");
+                            info!("Fetching status first for cell-voltages");
                             match bms.get_status() {
                                 Ok(status) => fetched_status = Some(status),
-                                Err(e) => error!("Error fetching status for voltages: {}", e),
+                                Err(e) => error!("Error fetching status for cell-voltages: {}", e),
                             }
                         }
                         if fetched_status.is_some() || fetch_all {
                             // Proceed if status available or if fetching all
                             match bms.get_cell_voltages() {
-                                Ok(voltages) => fetched_voltages = Some(voltages),
-                                Err(e) => error!("Error fetching cell voltages: {}", e),
+                                Ok(voltages) => fetched_cell_voltages = Some(voltages),
+                                Err(e) => error!("Error fetching cell-voltages: {}", e),
                             }
                         } else if !fetch_all {
                             // only log if not covered by 'all' already
                             error!("Skipping voltage fetch: status unavailable and not fetching all metrics.");
                         }
                     }
-                    if fetch_all || metric_name == "temperatures" {
-                        info!("Fetching metric: temperatures");
+                    if fetch_all || metric_name == "cell-temperatures" {
+                        info!("Fetching metric: cell-temperatures");
+                        found_metric_name = true;
                         if fetched_status.is_none() && !fetch_all {
                             // Ensure status is fetched if not already
-                            info!("Fetching status first for cell temperatures");
+                            info!("Fetching status first for cell-temperatures");
                             match bms.get_status() {
                                 Ok(status) => fetched_status = Some(status),
-                                Err(e) => error!("Error fetching status for temperatures: {}", e),
+                                Err(e) => {
+                                    error!("Error fetching status for cell-temperatures: {}", e)
+                                }
                             }
                         }
                         if fetched_status.is_some() || fetch_all {
                             // Proceed if status available or if fetching all
                             match bms.get_cell_temperatures() {
-                                Ok(temps) => fetched_temperatures = Some(temps),
-                                Err(e) => error!("Error fetching cell temperatures: {}", e),
+                                Ok(temps) => fetched_cell_temperatures = Some(temps),
+                                Err(e) => error!("Error fetching cell-temperatures: {}", e),
                             }
                         } else if !fetch_all {
                             // only log if not covered by 'all' already
                             error!("Skipping temperature fetch: status unavailable and not fetching all metrics.");
                         }
                     }
+                    if fetch_all || metric_name == "balancing" {
+                        info!("Fetching metric: balancing");
+                        found_metric_name = true;
+                        match bms.get_balancing_status() {
+                            Ok(range) => fetched_balancing = Some(range),
+                            Err(e) => error!("Error fetching balancing: {}", e),
+                        }
+                    }
+                    if fetch_all || metric_name == "errors" {
+                        info!("Fetching metric: errors");
+                        found_metric_name = true;
+                        match bms.get_errors() {
+                            Ok(range) => fetched_errors = Some(range),
+                            Err(e) => error!("Error fetching errors: {}", e),
+                        }
+                    }
                     // If only "all" was specified, no need to iterate further for this loop.
                     if fetch_all {
                         break;
+                    }
+                    if !found_metric_name {
+                        bail!("Unknown metric name '{metric_name}'");
                     }
                 }
 
@@ -399,16 +449,31 @@ fn main() -> Result<()> {
                     DaemonOutput::Console => {
                         println!("--- Data at {} ---", chrono::Local::now().to_rfc3339());
                         if let Some(status) = fetched_status {
-                            println!("Status: {status:?}");
+                            println!("{status:?}");
                         }
                         if let Some(soc) = fetched_soc {
-                            println!("SOC: {soc:?}");
+                            println!("{soc:?}");
                         }
-                        if let Some(voltages) = fetched_voltages {
-                            println!("Cell Voltages: {voltages:?}");
+                        if let Some(mosfet) = fetched_mosfet {
+                            println!("{mosfet:?}");
                         }
-                        if let Some(temperatures) = fetched_temperatures {
-                            println!("Cell Temperatures: {temperatures:?}");
+                        if let Some(voltage_range) = fetched_voltage_range {
+                            println!("{voltage_range:?}");
+                        }
+                        if let Some(temperature_range) = fetched_temperature_range {
+                            println!("{temperature_range:?}");
+                        }
+                        if let Some(cell_voltages) = fetched_cell_voltages {
+                            println!("{cell_voltages:?}");
+                        }
+                        if let Some(cell_temperatures) = fetched_cell_temperatures {
+                            println!("{cell_temperatures:?}");
+                        }
+                        if let Some(balancing) = fetched_balancing {
+                            println!("{balancing:?}");
+                        }
+                        if let Some(errors) = fetched_errors {
+                            println!("{errors:?}");
                         }
                         println!("--------------------------");
                     }
@@ -421,47 +486,58 @@ fn main() -> Result<()> {
                             );
 
                             if let Some(status) = &fetched_status {
-                                match serde_json::to_value(status) {
-                                    Ok(val) => {
-                                        data_to_publish.insert("status".to_string(), val);
-                                    }
-                                    Err(e) => {
-                                        error!("Failed to serialize status to JSON value: {}", e)
-                                    }
-                                }
+                                let val = serde_json::to_value(status)
+                                    .with_context(|| "Failed to serialize status to JSON value")?;
+                                data_to_publish.insert("status".to_string(), val);
                             }
                             if let Some(soc) = &fetched_soc {
-                                match serde_json::to_value(soc) {
-                                    Ok(val) => {
-                                        data_to_publish.insert("soc".to_string(), val);
-                                    }
-                                    Err(e) => {
-                                        error!("Failed to serialize soc to JSON value: {}", e)
-                                    }
-                                }
+                                let val = serde_json::to_value(soc)
+                                    .with_context(|| "Failed to serialize soc to JSON value")?;
+                                data_to_publish.insert("soc".to_string(), val);
                             }
-                            if let Some(voltages) = &fetched_voltages {
-                                match serde_json::to_value(voltages) {
-                                    Ok(val) => {
-                                        data_to_publish.insert("cell_voltages".to_string(), val);
-                                    }
-                                    Err(e) => error!(
-                                        "Failed to serialize cell_voltages to JSON value: {}",
-                                        e
-                                    ),
-                                }
+                            if let Some(mosfet) = &fetched_mosfet {
+                                let val = serde_json::to_value(mosfet)
+                                    .with_context(|| "Failed to serialize mosfet to JSON value")?;
+                                data_to_publish.insert("mosfet".to_string(), val);
                             }
-                            if let Some(temperatures) = &fetched_temperatures {
-                                match serde_json::to_value(temperatures) {
-                                    Ok(val) => {
-                                        data_to_publish
-                                            .insert("cell_temperatures".to_string(), val);
-                                    }
-                                    Err(e) => error!(
-                                        "Failed to serialize cell_temperatures to JSON value: {}",
-                                        e
-                                    ),
-                                }
+                            if let Some(voltage_range) = &fetched_voltage_range {
+                                let val =
+                                    serde_json::to_value(voltage_range).with_context(|| {
+                                        "Failed to serialize voltage_range to JSON value"
+                                    })?;
+                                data_to_publish.insert("voltage_range".to_string(), val);
+                            }
+                            if let Some(temperature_range) = &fetched_temperature_range {
+                                let val =
+                                    serde_json::to_value(temperature_range).with_context(|| {
+                                        "Failed to serialize temperature_range to JSON value"
+                                    })?;
+                                data_to_publish.insert("temperature_range".to_string(), val);
+                            }
+                            if let Some(cell_voltages) = &fetched_cell_voltages {
+                                let val =
+                                    serde_json::to_value(cell_voltages).with_context(|| {
+                                        "Failed to serialize cell_voltages to JSON value"
+                                    })?;
+                                data_to_publish.insert("cell_voltages".to_string(), val);
+                            }
+                            if let Some(cell_temperatures) = &fetched_cell_temperatures {
+                                let val =
+                                    serde_json::to_value(cell_temperatures).with_context(|| {
+                                        "Failed to serialize cell_temperatures to JSON value"
+                                    })?;
+                                data_to_publish.insert("cell_temperatures".to_string(), val);
+                            }
+                            if let Some(balancing) = &fetched_balancing {
+                                let val = serde_json::to_value(balancing).with_context(|| {
+                                    "Failed to serialize balancing to JSON value"
+                                })?;
+                                data_to_publish.insert("balancing".to_string(), val);
+                            }
+                            if let Some(errors) = &fetched_errors {
+                                let val = serde_json::to_value(errors)
+                                    .with_context(|| "Failed to serialize errors to JSON value")?;
+                                data_to_publish.insert("errors".to_string(), val);
                             }
 
                             // Only publish if there's more than just the timestamp
