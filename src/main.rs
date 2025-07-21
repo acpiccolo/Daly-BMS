@@ -112,6 +112,10 @@ struct CliArgs {
     /// (useful for some serial adapters that need time to switch between TX/RX)
     #[arg(value_parser = humantime::parse_duration, long, default_value = "50ms")]
     delay: Duration,
+
+    /// Number of retries for failed commands
+    #[arg(long, default_value = "3")]
+    retries: u8,
 }
 
 fn logging_init(loglevel: LevelFilter) -> LoggerHandle {
@@ -237,6 +241,7 @@ fn main() -> Result<()> {
         .with_context(|| format!("Cannot open serial port '{}'", args.device))?;
     bms.set_timeout(args.timeout)?;
     bms.set_delay(args.delay);
+    bms.set_retry(args.retries);
 
     match args.command {
         CliCommands::Status => print_status!(bms),

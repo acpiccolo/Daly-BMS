@@ -70,6 +70,7 @@ pub struct DalyBMS {
     io_timeout: Duration,   // Timeout for individual I/O operations
     delay: Duration,        // Delay between commands
     status: Option<Status>, // Stores the latest status
+    retries: u8,
 }
 
 impl DalyBMS {
@@ -114,7 +115,13 @@ impl DalyBMS {
             delay: MINIMUM_DELAY, // Default delay from protocol module
             io_timeout: Duration::from_secs(5), // Default I/O timeout
             status: None,
+            retries: 3,
         })
+    }
+
+    /// sets the number of retries for a failed send_bytes operation
+    pub fn set_retry(&mut self, n_retries: u8) {
+        self.retries = n_retries;
     }
 
     /// Asynchronously waits for the configured delay duration since the last command execution.
@@ -129,33 +136,42 @@ impl DalyBMS {
     /// Private async helper to send bytes to the serial port.
     /// It handles clearing pending data, awaiting delay, and writing the buffer with timeouts.
     async fn send_bytes(&mut self, tx_buffer: &[u8]) -> Result<()> {
-        // clear all incoming serial to avoid data collision
-        loop {
-            log::trace!("read to see if there is any pending data");
-            let pending = self.serial.bytes_to_read()?;
-            log::trace!("got {} pending bytes", pending);
-            if pending > 0 {
-                let mut buf: Vec<u8> = vec![0; 64]; // Temporary buffer to drain
-                let received =
-                    tokio::time::timeout(self.io_timeout, self.serial.read(buf.as_mut_slice()))
-                        .await??;
-                log::trace!("{} pending bytes consumed", received);
-            } else {
-                break;
+        for _ in 0..self.retries {
+            // clear all incoming serial to avoid data collision
+            loop {
+                log::trace!("read to see if there is any pending data");
+                let pending = self.serial.bytes_to_read()?;
+                log::trace!("got {} pending bytes", pending);
+                if pending > 0 {
+                    let mut buf: Vec<u8> = vec![0; 64]; // Temporary buffer to drain
+                    let received =
+                        tokio::time::timeout(self.io_timeout, self.serial.read(buf.as_mut_slice()))
+                            .await??;
+                    log::trace!("{} pending bytes consumed", received);
+                } else {
+                    break;
+                }
+            }
+            self.serial_await_delay().await;
+
+            log::trace!("write bytes: {:02X?}", tx_buffer);
+            if tokio::time::timeout(self.io_timeout, self.serial.write_all(tx_buffer))
+                .await?
+                .is_ok()
+            {
+                // Flushing is usually not necessary and can sometimes cause issues.
+                if false {
+                    // Disabled by default
+                    log::trace!("flush connection");
+                    tokio::time::timeout(self.io_timeout, self.serial.flush()).await??;
+                }
+                return Ok(());
             }
         }
-        self.serial_await_delay().await;
-
-        log::trace!("write bytes: {:02X?}", tx_buffer);
-        tokio::time::timeout(self.io_timeout, self.serial.write_all(tx_buffer)).await??;
-
-        // Flushing is usually not necessary and can sometimes cause issues.
-        if false {
-            // Disabled by default
-            log::trace!("flush connection");
-            tokio::time::timeout(self.io_timeout, self.serial.flush()).await??;
-        }
-        Ok(())
+        Err(Error::IOError(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            "failed to send bytes",
+        )))
     }
 
     /// Private async helper to receive a specified number of bytes from the serial port with timeouts.

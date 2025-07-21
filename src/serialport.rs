@@ -63,6 +63,7 @@ pub struct DalyBMS {
     last_execution: Instant,
     delay: Duration,
     status: Option<Status>, // Stores the latest status to provide cell/sensor counts
+    retries: u8,
 }
 
 impl DalyBMS {
@@ -103,7 +104,13 @@ impl DalyBMS {
             last_execution: Instant::now(),
             delay: MINIMUM_DELAY, // Default delay from protocol module
             status: None,
+            retries: 3,
         })
+    }
+
+    /// sets the number of retries for a failed send_bytes operation
+    pub fn set_retry(&mut self, n_retries: u8) {
+        self.retries = n_retries;
     }
 
     /// Waits for the configured delay duration since the last command execution.
@@ -118,32 +125,38 @@ impl DalyBMS {
     /// Private helper to send bytes to the serial port.
     /// It handles clearing pending data, awaiting delay, and writing the buffer.
     fn send_bytes(&mut self, tx_buffer: &[u8]) -> Result<()> {
-        // clear all incoming serial to avoid data collision
-        loop {
-            log::trace!("read to see if there is any pending data");
-            let pending = self.serial.bytes_to_read()?;
-            log::trace!("got {} pending bytes", pending);
-            if pending > 0 {
-                let mut buf: Vec<u8> = vec![0; 64]; // Temporary buffer to drain
-                let received = self.serial.read(buf.as_mut_slice())?;
-                log::trace!("{} pending bytes consumed", received);
-            } else {
-                break;
+        for _ in 0..self.retries {
+            // clear all incoming serial to avoid data collision
+            loop {
+                log::trace!("read to see if there is any pending data");
+                let pending = self.serial.bytes_to_read()?;
+                log::trace!("got {} pending bytes", pending);
+                if pending > 0 {
+                    let mut buf: Vec<u8> = vec![0; 64]; // Temporary buffer to drain
+                    let received = self.serial.read(buf.as_mut_slice())?;
+                    log::trace!("{} pending bytes consumed", received);
+                } else {
+                    break;
+                }
+            }
+            self.serial_await_delay();
+
+            log::trace!("write bytes: {:02X?}", tx_buffer);
+            if self.serial.write_all(tx_buffer).is_ok() {
+                // Flushing is usually not necessary for USB serial devices and can sometimes cause issues.
+                // If needed, it can be enabled here.
+                if false {
+                    // Disabled by default
+                    log::trace!("flush connection");
+                    self.serial.flush()?;
+                }
+                return Ok(());
             }
         }
-        self.serial_await_delay();
-
-        log::trace!("write bytes: {:02X?}", tx_buffer);
-        self.serial.write_all(tx_buffer)?;
-
-        // Flushing is usually not necessary for USB serial devices and can sometimes cause issues.
-        // If needed, it can be enabled here.
-        if false {
-            // Disabled by default
-            log::trace!("flush connection");
-            self.serial.flush()?;
-        }
-        Ok(())
+        Err(Error::IOError(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            "failed to send bytes",
+        )))
     }
 
     /// Private helper to receive a specified number of bytes from the serial port.
