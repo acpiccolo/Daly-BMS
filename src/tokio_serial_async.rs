@@ -136,42 +136,33 @@ impl DalyBMS {
     /// Private async helper to send bytes to the serial port.
     /// It handles clearing pending data, awaiting delay, and writing the buffer with timeouts.
     async fn send_bytes(&mut self, tx_buffer: &[u8]) -> Result<()> {
-        for _ in 0..self.retries {
-            // clear all incoming serial to avoid data collision
-            loop {
-                log::trace!("read to see if there is any pending data");
-                let pending = self.serial.bytes_to_read()?;
-                log::trace!("got {} pending bytes", pending);
-                if pending > 0 {
-                    let mut buf: Vec<u8> = vec![0; 64]; // Temporary buffer to drain
-                    let received =
-                        tokio::time::timeout(self.io_timeout, self.serial.read(buf.as_mut_slice()))
-                            .await??;
-                    log::trace!("{} pending bytes consumed", received);
-                } else {
-                    break;
-                }
-            }
-            self.serial_await_delay().await;
-
-            log::trace!("write bytes: {:02X?}", tx_buffer);
-            if tokio::time::timeout(self.io_timeout, self.serial.write_all(tx_buffer))
-                .await?
-                .is_ok()
-            {
-                // Flushing is usually not necessary and can sometimes cause issues.
-                if false {
-                    // Disabled by default
-                    log::trace!("flush connection");
-                    tokio::time::timeout(self.io_timeout, self.serial.flush()).await??;
-                }
-                return Ok(());
+        // clear all incoming serial to avoid data collision
+        loop {
+            log::trace!("read to see if there is any pending data");
+            let pending = self.serial.bytes_to_read()?;
+            log::trace!("got {} pending bytes", pending);
+            if pending > 0 {
+                let mut buf: Vec<u8> = vec![0; 64]; // Temporary buffer to drain
+                let received =
+                    tokio::time::timeout(self.io_timeout, self.serial.read(buf.as_mut_slice()))
+                        .await??;
+                log::trace!("{} pending bytes consumed", received);
+            } else {
+                break;
             }
         }
-        Err(Error::IOError(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            "failed to send bytes",
-        )))
+        self.serial_await_delay().await;
+
+        log::trace!("write bytes: {:02X?}", tx_buffer);
+        tokio::time::timeout(self.io_timeout, self.serial.write_all(tx_buffer)).await??;
+
+        // Flushing is usually not necessary and can sometimes cause issues.
+        if false {
+            // Disabled by default
+            log::trace!("flush connection");
+            tokio::time::timeout(self.io_timeout, self.serial.flush()).await??;
+        }
+        Ok(())
     }
 
     /// Private async helper to receive a specified number of bytes from the serial port with timeouts.
@@ -224,6 +215,19 @@ impl DalyBMS {
         log::trace!("set delay to {:?}", self.delay);
     }
 
+    async fn request_with_retry<'a, F, T, Fut>(&'a mut self, mut request: F) -> Result<T>
+    where
+        F: FnMut(&'a mut Self) -> Fut,
+        Fut: std::future::Future<Output = Result<T>>,
+    {
+        for _ in 0..self.retries {
+            if let Ok(result) = request(self).await {
+                return Ok(result);
+            }
+        }
+        request(self).await
+    }
+
     /// Asynchronously retrieves the State of Charge (SOC) and other primary battery metrics.
     ///
     /// # Returns
@@ -247,8 +251,11 @@ impl DalyBMS {
     /// ```
     pub async fn get_soc(&mut self) -> Result<Soc> {
         log::trace!("get SOC");
-        self.send_bytes(&Soc::request(Address::Host)).await?;
-        Ok(Soc::decode(&self.receive_bytes(Soc::reply_size()).await?)?)
+        self.request_with_retry(|bms| async {
+            bms.send_bytes(&Soc::request(Address::Host)).await?;
+            Ok(Soc::decode(&bms.receive_bytes(Soc::reply_size()).await?)?)
+        })
+        .await
     }
 
     /// Asynchronously retrieves the highest and lowest cell voltages in the battery pack.
@@ -258,11 +265,14 @@ impl DalyBMS {
     /// A `Result` containing the `CellVoltageRange` data or an `Error`.
     pub async fn get_cell_voltage_range(&mut self) -> Result<CellVoltageRange> {
         log::trace!("get cell voltage range");
-        self.send_bytes(&CellVoltageRange::request(Address::Host))
-            .await?;
-        Ok(CellVoltageRange::decode(
-            &self.receive_bytes(CellVoltageRange::reply_size()).await?,
-        )?)
+        self.request_with_retry(|bms| async {
+            bms.send_bytes(&CellVoltageRange::request(Address::Host))
+                .await?;
+            Ok(CellVoltageRange::decode(
+                &bms.receive_bytes(CellVoltageRange::reply_size()).await?,
+            )?)
+        })
+        .await
     }
 
     /// Asynchronously retrieves the highest and lowest temperatures measured by the BMS.
@@ -272,11 +282,14 @@ impl DalyBMS {
     /// A `Result` containing the `TemperatureRange` data or an `Error`.
     pub async fn get_temperature_range(&mut self) -> Result<TemperatureRange> {
         log::trace!("get temperature range");
-        self.send_bytes(&TemperatureRange::request(Address::Host))
-            .await?;
-        Ok(TemperatureRange::decode(
-            &self.receive_bytes(TemperatureRange::reply_size()).await?,
-        )?)
+        self.request_with_retry(|bms| async {
+            bms.send_bytes(&TemperatureRange::request(Address::Host))
+                .await?;
+            Ok(TemperatureRange::decode(
+                &bms.receive_bytes(TemperatureRange::reply_size()).await?,
+            )?)
+        })
+        .await
     }
 
     /// Asynchronously retrieves the status of the charging and discharging MOSFETs, and other related data.
@@ -286,11 +299,14 @@ impl DalyBMS {
     /// A `Result` containing the `MosfetStatus` data or an `Error`.
     pub async fn get_mosfet_status(&mut self) -> Result<MosfetStatus> {
         log::trace!("get mosfet status");
-        self.send_bytes(&MosfetStatus::request(Address::Host))
-            .await?;
-        Ok(MosfetStatus::decode(
-            &self.receive_bytes(MosfetStatus::reply_size()).await?,
-        )?)
+        self.request_with_retry(|bms| async {
+            bms.send_bytes(&MosfetStatus::request(Address::Host))
+                .await?;
+            Ok(MosfetStatus::decode(
+                &bms.receive_bytes(MosfetStatus::reply_size()).await?,
+            )?)
+        })
+        .await
     }
 
     /// Asynchronously retrieves general status information from the BMS, including cell count and temperature sensor count.
@@ -304,10 +320,13 @@ impl DalyBMS {
     /// A `Result` containing the `Status` data or an `Error`.
     pub async fn get_status(&mut self) -> Result<Status> {
         log::trace!("get status");
-        self.send_bytes(&Status::request(Address::Host)).await?;
-        let status = Status::decode(&self.receive_bytes(Status::reply_size()).await?)?;
-        self.status = Some(status.clone()); // Cache the status
-        Ok(status)
+        self.request_with_retry(|bms| async {
+            bms.send_bytes(&Status::request(Address::Host)).await?;
+            let status = Status::decode(&bms.receive_bytes(Status::reply_size()).await?)?;
+            bms.status = Some(status.clone()); // Cache the status
+            Ok(status)
+        })
+        .await
     }
 
     /// Asynchronously retrieves the voltage of each individual cell in the battery pack.
@@ -326,14 +345,16 @@ impl DalyBMS {
         } else {
             return Err(Error::StatusError);
         };
-        self.send_bytes(&CellVoltages::request(Address::Host))
-            .await?;
-        Ok(CellVoltages::decode(
-            &self
-                .receive_bytes(CellVoltages::reply_size(n_cells))
-                .await?,
-            n_cells,
-        )?)
+        self.request_with_retry(|bms| async {
+            bms.send_bytes(&CellVoltages::request(Address::Host))
+                .await?;
+            Ok(CellVoltages::decode(
+                &bms.receive_bytes(CellVoltages::reply_size(n_cells))
+                    .await?,
+                n_cells,
+            )?)
+        })
+        .await
     }
 
     /// Asynchronously retrieves the temperature from each individual temperature sensor.
@@ -353,14 +374,16 @@ impl DalyBMS {
             return Err(Error::StatusError);
         };
 
-        self.send_bytes(&CellTemperatures::request(Address::Host))
-            .await?;
-        Ok(CellTemperatures::decode(
-            &self
-                .receive_bytes(CellTemperatures::reply_size(n_sensors))
-                .await?,
-            n_sensors,
-        )?)
+        self.request_with_retry(|bms| async {
+            bms.send_bytes(&CellTemperatures::request(Address::Host))
+                .await?;
+            Ok(CellTemperatures::decode(
+                &bms.receive_bytes(CellTemperatures::reply_size(n_sensors))
+                    .await?,
+                n_sensors,
+            )?)
+        })
+        .await
     }
 
     /// Asynchronously retrieves the balancing status of each individual cell.
@@ -380,12 +403,15 @@ impl DalyBMS {
             return Err(Error::StatusError);
         };
 
-        self.send_bytes(&CellBalanceState::request(Address::Host))
-            .await?;
-        Ok(CellBalanceState::decode(
-            &self.receive_bytes(CellBalanceState::reply_size()).await?,
-            n_cells,
-        )?)
+        self.request_with_retry(|bms| async {
+            bms.send_bytes(&CellBalanceState::request(Address::Host))
+                .await?;
+            Ok(CellBalanceState::decode(
+                &bms.receive_bytes(CellBalanceState::reply_size()).await?,
+                n_cells,
+            )?)
+        })
+        .await
     }
 
     /// Asynchronously retrieves a list of active error codes from the BMS.
@@ -396,10 +422,13 @@ impl DalyBMS {
     /// An empty vector means no errors are currently active.
     pub async fn get_errors(&mut self) -> Result<Vec<ErrorCode>> {
         log::trace!("get errors");
-        self.send_bytes(&ErrorCode::request(Address::Host)).await?;
-        Ok(ErrorCode::decode(
-            &self.receive_bytes(ErrorCode::reply_size()).await?,
-        )?)
+        self.request_with_retry(|bms| async {
+            bms.send_bytes(&ErrorCode::request(Address::Host)).await?;
+            Ok(ErrorCode::decode(
+                &bms.receive_bytes(ErrorCode::reply_size()).await?,
+            )?)
+        })
+        .await
     }
 
     /// Asynchronously enables or disables the discharging MOSFET.
@@ -413,11 +442,15 @@ impl DalyBMS {
     /// An empty `Result` indicating success or an `Error`.
     pub async fn set_discharge_mosfet(&mut self, enable: bool) -> Result<()> {
         log::trace!("set discharge mosfet to {}", enable);
-        self.send_bytes(&SetDischargeMosfet::request(Address::Host, enable))
-            .await?;
-        Ok(SetDischargeMosfet::decode(
-            &self.receive_bytes(SetDischargeMosfet::reply_size()).await?,
-        )?)
+        self.request_with_retry(|bms| async {
+            bms.send_bytes(&SetDischargeMosfet::request(Address::Host, enable))
+                .await?;
+            Ok(SetDischargeMosfet::decode(
+                &bms.receive_bytes(SetDischargeMosfet::reply_size())
+                    .await?,
+            )?)
+        })
+        .await
     }
 
     /// Asynchronously enables or disables the charging MOSFET.
@@ -431,11 +464,14 @@ impl DalyBMS {
     /// An empty `Result` indicating success or an `Error`.
     pub async fn set_charge_mosfet(&mut self, enable: bool) -> Result<()> {
         log::trace!("set charge mosfet to {}", enable);
-        self.send_bytes(&SetChargeMosfet::request(Address::Host, enable))
-            .await?;
-        Ok(SetChargeMosfet::decode(
-            &self.receive_bytes(SetChargeMosfet::reply_size()).await?,
-        )?)
+        self.request_with_retry(|bms| async {
+            bms.send_bytes(&SetChargeMosfet::request(Address::Host, enable))
+                .await?;
+            Ok(SetChargeMosfet::decode(
+                &bms.receive_bytes(SetChargeMosfet::reply_size()).await?,
+            )?)
+        })
+        .await
     }
 
     /// Asynchronously sets the State of Charge (SOC) percentage on the BMS.
@@ -449,11 +485,14 @@ impl DalyBMS {
     /// An empty `Result` indicating success or an `Error`.
     pub async fn set_soc(&mut self, soc_percent: f32) -> Result<()> {
         log::trace!("set SOC to {}", soc_percent);
-        self.send_bytes(&SetSoc::request(Address::Host, soc_percent))
-            .await?;
-        Ok(SetSoc::decode(
-            &self.receive_bytes(SetSoc::reply_size()).await?,
-        )?)
+        self.request_with_retry(|bms| async {
+            bms.send_bytes(&SetSoc::request(Address::Host, soc_percent))
+                .await?;
+            Ok(SetSoc::decode(
+                &bms.receive_bytes(SetSoc::reply_size()).await?,
+            )?)
+        })
+        .await
     }
 
     /// Asynchronously resets the BMS to its factory default settings.
@@ -465,9 +504,12 @@ impl DalyBMS {
     /// An empty `Result` indicating success or an `Error`.
     pub async fn reset(&mut self) -> Result<()> {
         log::trace!("reset to factory default settings");
-        self.send_bytes(&BmsReset::request(Address::Host)).await?;
-        Ok(BmsReset::decode(
-            &self.receive_bytes(BmsReset::reply_size()).await?,
-        )?)
+        self.request_with_retry(|bms| async {
+            bms.send_bytes(&BmsReset::request(Address::Host)).await?;
+            Ok(BmsReset::decode(
+                &bms.receive_bytes(BmsReset::reply_size()).await?,
+            )?)
+        })
+        .await
     }
 }
