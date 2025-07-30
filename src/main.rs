@@ -1,4 +1,4 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use clap_verbosity_flag::{InfoLevel, Verbosity};
 use flexi_logger::{Logger, LoggerHandle};
@@ -103,14 +103,14 @@ struct CliArgs {
     #[command(subcommand)]
     command: CliCommands,
 
-    /// Timeout for serial I/O operations (e.g., "500ms", "1s", "2s 500ms")
-    #[arg(value_parser = humantime::parse_duration, long, default_value = "500ms")]
+    /// Timeout for serial I/O operations (e.g., "100ms", "1s", "2s 500ms")
+    #[arg(value_parser = humantime::parse_duration, long, default_value = "100ms")]
     timeout: Duration,
 
     // Some USB - RS485 dongles requires at least 10ms to switch between TX and RX, so use a save delay between frames
     /// Delay between sending multiple commands to the BMS (e.g., "50ms", "100ms")
     /// (useful for some serial adapters that need time to switch between TX/RX)
-    #[arg(value_parser = humantime::parse_duration, long, default_value = "50ms")]
+    #[arg(value_parser = humantime::parse_duration, long, default_value = "15ms")]
     delay: Duration,
 
     /// Number of retries for failed commands
@@ -398,7 +398,9 @@ fn main() -> Result<()> {
                             }
                         } else if !fetch_all {
                             // only log if not covered by 'all' already
-                            error!("Skipping voltage fetch: status unavailable and not fetching all metrics.");
+                            error!(
+                                "Skipping voltage fetch: status unavailable and not fetching all metrics."
+                            );
                         }
                     }
                     if fetch_all || metric_name == "cell-temperatures" {
@@ -422,7 +424,9 @@ fn main() -> Result<()> {
                             }
                         } else if !fetch_all {
                             // only log if not covered by 'all' already
-                            error!("Skipping temperature fetch: status unavailable and not fetching all metrics.");
+                            error!(
+                                "Skipping temperature fetch: status unavailable and not fetching all metrics."
+                            );
                         }
                     }
                     if fetch_all || metric_name == "balancing" {
@@ -506,37 +510,33 @@ fn main() -> Result<()> {
                                 data_to_publish.insert("mosfet".to_string(), val);
                             }
                             if let Some(voltage_range) = &fetched_voltage_range {
-                                let val =
-                                    serde_json::to_value(voltage_range).with_context(|| {
-                                        "Failed to serialize voltage_range to JSON value"
-                                    })?;
+                                let val = serde_json::to_value(voltage_range).with_context(
+                                    || "Failed to serialize voltage_range to JSON value",
+                                )?;
                                 data_to_publish.insert("voltage_range".to_string(), val);
                             }
                             if let Some(temperature_range) = &fetched_temperature_range {
-                                let val =
-                                    serde_json::to_value(temperature_range).with_context(|| {
-                                        "Failed to serialize temperature_range to JSON value"
-                                    })?;
+                                let val = serde_json::to_value(temperature_range).with_context(
+                                    || "Failed to serialize temperature_range to JSON value",
+                                )?;
                                 data_to_publish.insert("temperature_range".to_string(), val);
                             }
                             if let Some(cell_voltages) = &fetched_cell_voltages {
-                                let val =
-                                    serde_json::to_value(cell_voltages).with_context(|| {
-                                        "Failed to serialize cell_voltages to JSON value"
-                                    })?;
+                                let val = serde_json::to_value(cell_voltages).with_context(
+                                    || "Failed to serialize cell_voltages to JSON value",
+                                )?;
                                 data_to_publish.insert("cell_voltages".to_string(), val);
                             }
                             if let Some(cell_temperatures) = &fetched_cell_temperatures {
-                                let val =
-                                    serde_json::to_value(cell_temperatures).with_context(|| {
-                                        "Failed to serialize cell_temperatures to JSON value"
-                                    })?;
+                                let val = serde_json::to_value(cell_temperatures).with_context(
+                                    || "Failed to serialize cell_temperatures to JSON value",
+                                )?;
                                 data_to_publish.insert("cell_temperatures".to_string(), val);
                             }
                             if let Some(balancing) = &fetched_balancing {
-                                let val = serde_json::to_value(balancing).with_context(|| {
-                                    "Failed to serialize balancing to JSON value"
-                                })?;
+                                let val = serde_json::to_value(balancing).with_context(
+                                    || "Failed to serialize balancing to JSON value",
+                                )?;
                                 data_to_publish.insert("balancing".to_string(), val);
                             }
                             if let Some(errors) = &fetched_errors {
@@ -567,7 +567,9 @@ fn main() -> Result<()> {
                                 info!("No data fetched in this cycle to publish via MQTT.");
                             }
                         } else {
-                            warn!("MQTT output selected, but publisher is not initialized. Skipping publish.");
+                            warn!(
+                                "MQTT output selected, but publisher is not initialized. Skipping publish."
+                            );
                         }
                     }
                 }
@@ -583,7 +585,7 @@ fn main() -> Result<()> {
 mod tests {
     // use super::*; // Removed as items like default_bms_status are local or directly imported
     use dalybms_lib::protocol::{IOState, Soc as BmsSoc, Status as BmsStatus};
-    use serde_json::{json, Value as JsonValue};
+    use serde_json::{Value as JsonValue, json};
 
     // Helper to create a default BmsStatus for tests
     fn default_bms_status() -> BmsStatus {

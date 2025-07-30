@@ -220,9 +220,15 @@ impl DalyBMS {
         F: FnMut(&'a mut Self) -> Fut,
         Fut: std::future::Future<Output = Result<T>>,
     {
-        for _ in 0..self.retries {
-            if let Ok(result) = request(self).await {
-                return Ok(result);
+        let retries = self.retries;
+        for t in 0..retries {
+            match request(self).await {
+                Ok(result) => {
+                    return Ok(result);
+                }
+                Err(err) => {
+                    log::trace!("Failed try {} of {}, repeating ({err})", t + 1, retries);
+                }
             }
         }
         request(self).await
@@ -349,8 +355,7 @@ impl DalyBMS {
             bms.send_bytes(&CellVoltages::request(Address::Host))
                 .await?;
             Ok(CellVoltages::decode(
-                &bms.receive_bytes(CellVoltages::reply_size(n_cells))
-                    .await?,
+                &bms.receive_bytes(CellVoltages::reply_size(n_cells)).await?,
                 n_cells,
             )?)
         })
@@ -446,8 +451,7 @@ impl DalyBMS {
             bms.send_bytes(&SetDischargeMosfet::request(Address::Host, enable))
                 .await?;
             Ok(SetDischargeMosfet::decode(
-                &bms.receive_bytes(SetDischargeMosfet::reply_size())
-                    .await?,
+                &bms.receive_bytes(SetDischargeMosfet::reply_size()).await?,
             )?)
         })
         .await

@@ -206,9 +206,18 @@ impl DalyBMS {
     where
         F: Fn(&mut Self) -> Result<T>,
     {
-        for _ in 0..self.retries {
-            if let Ok(result) = request(self) {
-                return Ok(result);
+        for t in 0..self.retries {
+            match request(self) {
+                Ok(result) => {
+                    return Ok(result);
+                }
+                Err(err) => {
+                    log::trace!(
+                        "Failed try {} of {}, repeating ({err})",
+                        t + 1,
+                        self.retries
+                    );
+                }
             }
         }
         request(self)
