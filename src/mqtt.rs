@@ -34,8 +34,8 @@ fn default_qos() -> i32 {
 }
 
 fn generate_random_string(len: usize) -> String {
-    use rand::distr::Alphanumeric;
     use rand::Rng;
+    use rand::distr::Alphanumeric;
 
     rand::rng()
         .sample_iter(&Alphanumeric)
