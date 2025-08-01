@@ -63,6 +63,7 @@ pub struct DalyBMS {
     last_execution: Instant,
     delay: Duration,
     status: Option<Status>, // Stores the latest status to provide cell/sensor counts
+    retries: u8,
 }
 
 impl DalyBMS {
@@ -103,7 +104,13 @@ impl DalyBMS {
             last_execution: Instant::now(),
             delay: MINIMUM_DELAY, // Default delay from protocol module
             status: None,
+            retries: 3,
         })
+    }
+
+    /// sets the number of retries for a failed send_bytes operation
+    pub fn set_retry(&mut self, n_retries: u8) {
+        self.retries = n_retries;
     }
 
     /// Waits for the configured delay duration since the last command execution.
@@ -159,6 +166,11 @@ impl DalyBMS {
         Ok(rx_buffer)
     }
 
+    fn send_and_receive(&mut self, tx_buffer: &[u8], reply_size: usize) -> Result<Vec<u8>> {
+        self.send_bytes(tx_buffer)?;
+        self.receive_bytes(reply_size)
+    }
+
     /// Sets the timeout for serial port I/O operations.
     ///
     /// # Arguments
@@ -195,6 +207,32 @@ impl DalyBMS {
         log::trace!("set delay to {:?}", self.delay);
     }
 
+    fn request_with_retry<F, T>(
+        &mut self,
+        tx_buffer: &[u8],
+        reply_size: usize,
+        request: F,
+    ) -> Result<T>
+    where
+        F: Fn(&mut Self, &[u8], usize) -> Result<T>,
+    {
+        for t in 0..self.retries {
+            match request(self, tx_buffer, reply_size) {
+                Ok(result) => {
+                    return Ok(result);
+                }
+                Err(err) => {
+                    log::trace!(
+                        "Failed try {} of {}, repeating ({err})",
+                        t + 1,
+                        self.retries
+                    );
+                }
+            }
+        }
+        request(self, tx_buffer, reply_size)
+    }
+
     /// Retrieves the State of Charge (SOC) and other primary battery metrics.
     ///
     /// # Returns
@@ -216,8 +254,13 @@ impl DalyBMS {
     /// ```
     pub fn get_soc(&mut self) -> Result<Soc> {
         log::trace!("get SOC");
-        self.send_bytes(&Soc::request(Address::Host))?;
-        Ok(Soc::decode(&self.receive_bytes(Soc::reply_size())?)?)
+        self.request_with_retry(
+            &Soc::request(Address::Host),
+            Soc::reply_size(),
+            |bms, tx_buffer, reply_size| {
+                Ok(Soc::decode(&bms.send_and_receive(tx_buffer, reply_size)?)?)
+            },
+        )
     }
 
     /// Retrieves the highest and lowest cell voltages in the battery pack.
@@ -227,10 +270,15 @@ impl DalyBMS {
     /// A `Result` containing the `CellVoltageRange` data or an `Error`.
     pub fn get_cell_voltage_range(&mut self) -> Result<CellVoltageRange> {
         log::trace!("get cell voltage range");
-        self.send_bytes(&CellVoltageRange::request(Address::Host))?;
-        Ok(CellVoltageRange::decode(
-            &self.receive_bytes(CellVoltageRange::reply_size())?,
-        )?)
+        self.request_with_retry(
+            &CellVoltageRange::request(Address::Host),
+            CellVoltageRange::reply_size(),
+            |bms, tx_buffer, reply_size| {
+                Ok(CellVoltageRange::decode(
+                    &bms.send_and_receive(tx_buffer, reply_size)?,
+                )?)
+            },
+        )
     }
 
     /// Retrieves the highest and lowest temperatures measured by the BMS.
@@ -240,10 +288,15 @@ impl DalyBMS {
     /// A `Result` containing the `TemperatureRange` data or an `Error`.
     pub fn get_temperature_range(&mut self) -> Result<TemperatureRange> {
         log::trace!("get temperature range");
-        self.send_bytes(&TemperatureRange::request(Address::Host))?;
-        Ok(TemperatureRange::decode(
-            &self.receive_bytes(TemperatureRange::reply_size())?,
-        )?)
+        self.request_with_retry(
+            &TemperatureRange::request(Address::Host),
+            TemperatureRange::reply_size(),
+            |bms, tx_buffer, reply_size| {
+                Ok(TemperatureRange::decode(
+                    &bms.send_and_receive(tx_buffer, reply_size)?,
+                )?)
+            },
+        )
     }
 
     /// Retrieves the status of the charging and discharging MOSFETs, and other related data.
@@ -253,10 +306,15 @@ impl DalyBMS {
     /// A `Result` containing the `MosfetStatus` data or an `Error`.
     pub fn get_mosfet_status(&mut self) -> Result<MosfetStatus> {
         log::trace!("get mosfet status");
-        self.send_bytes(&MosfetStatus::request(Address::Host))?;
-        Ok(MosfetStatus::decode(
-            &self.receive_bytes(MosfetStatus::reply_size())?,
-        )?)
+        self.request_with_retry(
+            &MosfetStatus::request(Address::Host),
+            MosfetStatus::reply_size(),
+            |bms, tx_buffer, reply_size| {
+                Ok(MosfetStatus::decode(
+                    &bms.send_and_receive(tx_buffer, reply_size)?,
+                )?)
+            },
+        )
     }
 
     /// Retrieves general status information from the BMS, including cell count and temperature sensor count.
@@ -270,10 +328,15 @@ impl DalyBMS {
     /// A `Result` containing the `Status` data or an `Error`.
     pub fn get_status(&mut self) -> Result<Status> {
         log::trace!("get status");
-        self.send_bytes(&Status::request(Address::Host))?;
-        let status = Status::decode(&self.receive_bytes(Status::reply_size())?)?;
-        self.status = Some(status.clone()); // Cache the status
-        Ok(status)
+        self.request_with_retry(
+            &Status::request(Address::Host),
+            Status::reply_size(),
+            |bms, tx_buffer, reply_size| {
+                let status = Status::decode(&bms.send_and_receive(tx_buffer, reply_size)?)?;
+                bms.status = Some(status.clone()); // Cache the status
+                Ok(status)
+            },
+        )
     }
 
     /// Retrieves the voltage of each individual cell in the battery pack.
@@ -292,11 +355,16 @@ impl DalyBMS {
         } else {
             return Err(Error::StatusError);
         };
-        self.send_bytes(&CellVoltages::request(Address::Host))?;
-        Ok(CellVoltages::decode(
-            &self.receive_bytes(CellVoltages::reply_size(n_cells))?,
-            n_cells,
-        )?)
+        self.request_with_retry(
+            &CellVoltages::request(Address::Host),
+            CellVoltages::reply_size(n_cells),
+            |bms, tx_buffer, reply_size| {
+                Ok(CellVoltages::decode(
+                    &bms.send_and_receive(tx_buffer, reply_size)?,
+                    n_cells,
+                )?)
+            },
+        )
     }
 
     /// Retrieves the temperature from each individual temperature sensor.
@@ -316,11 +384,16 @@ impl DalyBMS {
             return Err(Error::StatusError);
         };
 
-        self.send_bytes(&CellTemperatures::request(Address::Host))?;
-        Ok(CellTemperatures::decode(
-            &self.receive_bytes(CellTemperatures::reply_size(n_sensors))?,
-            n_sensors,
-        )?)
+        self.request_with_retry(
+            &CellTemperatures::request(Address::Host),
+            CellTemperatures::reply_size(n_sensors),
+            |bms, tx_buffer, reply_size| {
+                Ok(CellTemperatures::decode(
+                    &bms.send_and_receive(tx_buffer, reply_size)?,
+                    n_sensors,
+                )?)
+            },
+        )
     }
 
     /// Retrieves the balancing status of each individual cell.
@@ -340,11 +413,16 @@ impl DalyBMS {
             return Err(Error::StatusError);
         };
 
-        self.send_bytes(&CellBalanceState::request(Address::Host))?;
-        Ok(CellBalanceState::decode(
-            &self.receive_bytes(CellBalanceState::reply_size())?,
-            n_cells,
-        )?)
+        self.request_with_retry(
+            &CellBalanceState::request(Address::Host),
+            CellBalanceState::reply_size(),
+            |bms, tx_buffer, reply_size| {
+                Ok(CellBalanceState::decode(
+                    &bms.send_and_receive(tx_buffer, reply_size)?,
+                    n_cells,
+                )?)
+            },
+        )
     }
 
     /// Retrieves a list of active error codes from the BMS.
@@ -355,10 +433,15 @@ impl DalyBMS {
     /// An empty vector means no errors are currently active.
     pub fn get_errors(&mut self) -> Result<Vec<ErrorCode>> {
         log::trace!("get errors");
-        self.send_bytes(&ErrorCode::request(Address::Host))?;
-        Ok(ErrorCode::decode(
-            &self.receive_bytes(ErrorCode::reply_size())?,
-        )?)
+        self.request_with_retry(
+            &ErrorCode::request(Address::Host),
+            ErrorCode::reply_size(),
+            |bms, tx_buffer, reply_size| {
+                Ok(ErrorCode::decode(
+                    &bms.send_and_receive(tx_buffer, reply_size)?,
+                )?)
+            },
+        )
     }
 
     /// Enables or disables the discharging MOSFET.
@@ -372,10 +455,15 @@ impl DalyBMS {
     /// An empty `Result` indicating success or an `Error`.
     pub fn set_discharge_mosfet(&mut self, enable: bool) -> Result<()> {
         log::trace!("set discharge mosfet to {}", enable);
-        self.send_bytes(&SetDischargeMosfet::request(Address::Host, enable))?;
-        Ok(SetDischargeMosfet::decode(
-            &self.receive_bytes(SetDischargeMosfet::reply_size())?,
-        )?)
+        self.request_with_retry(
+            &SetDischargeMosfet::request(Address::Host, enable),
+            SetDischargeMosfet::reply_size(),
+            |bms, tx_buffer, reply_size| {
+                Ok(SetDischargeMosfet::decode(
+                    &bms.send_and_receive(tx_buffer, reply_size)?,
+                )?)
+            },
+        )
     }
 
     /// Enables or disables the charging MOSFET.
@@ -389,10 +477,15 @@ impl DalyBMS {
     /// An empty `Result` indicating success or an `Error`.
     pub fn set_charge_mosfet(&mut self, enable: bool) -> Result<()> {
         log::trace!("set charge mosfet to {}", enable);
-        self.send_bytes(&SetChargeMosfet::request(Address::Host, enable))?;
-        Ok(SetChargeMosfet::decode(
-            &self.receive_bytes(SetChargeMosfet::reply_size())?,
-        )?)
+        self.request_with_retry(
+            &SetChargeMosfet::request(Address::Host, enable),
+            SetChargeMosfet::reply_size(),
+            |bms, tx_buffer, reply_size| {
+                Ok(SetChargeMosfet::decode(
+                    &bms.send_and_receive(tx_buffer, reply_size)?,
+                )?)
+            },
+        )
     }
 
     /// Sets the State of Charge (SOC) percentage on the BMS.
@@ -406,8 +499,15 @@ impl DalyBMS {
     /// An empty `Result` indicating success or an `Error`.
     pub fn set_soc(&mut self, soc_percent: f32) -> Result<()> {
         log::trace!("set SOC to {}", soc_percent);
-        self.send_bytes(&SetSoc::request(Address::Host, soc_percent))?;
-        Ok(SetSoc::decode(&self.receive_bytes(SetSoc::reply_size())?)?)
+        self.request_with_retry(
+            &SetSoc::request(Address::Host, soc_percent),
+            SetSoc::reply_size(),
+            |bms, tx_buffer, reply_size| {
+                Ok(SetSoc::decode(
+                    &bms.send_and_receive(tx_buffer, reply_size)?,
+                )?)
+            },
+        )
     }
 
     /// Resets the BMS to its factory default settings.
@@ -419,9 +519,14 @@ impl DalyBMS {
     /// An empty `Result` indicating success or an `Error`.
     pub fn reset(&mut self) -> Result<()> {
         log::trace!("reset to factory default settings");
-        self.send_bytes(&BmsReset::request(Address::Host))?;
-        Ok(BmsReset::decode(
-            &self.receive_bytes(BmsReset::reply_size())?,
-        )?)
+        self.request_with_retry(
+            &BmsReset::request(Address::Host),
+            BmsReset::reply_size(),
+            |bms, tx_buffer, reply_size| {
+                Ok(BmsReset::decode(
+                    &bms.send_and_receive(tx_buffer, reply_size)?,
+                )?)
+            },
+        )
     }
 }

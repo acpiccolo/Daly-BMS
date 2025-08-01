@@ -142,6 +142,11 @@ Here are some examples of how to use the `dalybms` tool. Replace `/dev/ttyUSB0` 
     ```
     (Useful if you experience communication issues with the default delay.)
 
+*   Set the number of retries for a failed command:
+    ```bash
+    dalybms --retries 5 soc
+    ```
+
 **6. Resetting the BMS**
 
 *   Reset the BMS to factory defaults (Use with extreme caution!):
