@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "serde")]
 mod util {
-    use serde::{ser::SerializeSeq, Serializer};
+    use serde::{Serializer, ser::SerializeSeq};
 
     pub fn f32_1_digits<S>(x: &f32, s: S) -> Result<S::Ok, S::Error>
     where
@@ -386,20 +386,6 @@ impl MosfetStatus {
     }
 }
 
-impl std::fmt::Display for MosfetStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "mode: {:?}, charging_mosfet: {}, discharging_mosfet: {}, bms_cycles: {}, capacity_ah: {:.3}Ah",
-            self.mode,
-            self.charging_mosfet,
-            self.discharging_mosfet,
-            self.bms_cycles,
-            self.capacity_ah
-        )
-    }
-}
-
 /// Represents the state of digital inputs (DI) and digital outputs (DO).
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
@@ -502,11 +488,7 @@ impl Status {
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct CellVoltages(
-    #[cfg_attr(
-        feature = "serde",
-        serde(serialize_with = "util::vec_f32_3_digits")
-    )]
-    Vec<f32>,
+    #[cfg_attr(feature = "serde", serde(serialize_with = "util::vec_f32_3_digits"))] Vec<f32>,
 );
 
 impl CellVoltages {
