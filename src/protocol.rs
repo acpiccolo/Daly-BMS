@@ -489,9 +489,7 @@ impl Status {
 /// The BMS returns cell voltages in multiple frames.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-pub struct CellVoltages {
-    voltages: Vec<f32>,
-}
+pub struct CellVoltages(Vec<f32>);
 
 impl CellVoltages {
     /// Creates a request frame to read individual cell voltages from the BMS.
@@ -564,7 +562,7 @@ impl CellVoltages {
                 }
             }
         }
-        Ok(Self { voltages })
+        Ok(Self(voltages))
     }
 }
 
@@ -572,7 +570,7 @@ impl std::ops::Deref for CellVoltages {
     type Target = [f32];
 
     fn deref(&self) -> &[f32] {
-        &self.voltages
+        &self.0
     }
 }
 
