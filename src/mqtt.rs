@@ -120,9 +120,13 @@ impl MqttPublisher {
         Ok(Self { client, config })
     }
 
-    pub fn publish(&self, payload: &str) -> Result<()> {
+    pub fn topic(&self) -> &str {
+        &self.config.topic
+    }
+
+    pub fn publish(&self, topic: &str, payload: &str) -> Result<()> {
         let msg = MessageBuilder::new()
-            .topic(&self.config.topic)
+            .topic(topic)
             .payload(payload)
             .qos(self.config.qos)
             .retained(false)
@@ -130,15 +134,12 @@ impl MqttPublisher {
 
         log::debug!(
             "Publishing to MQTT: Topic='{}', Payload='{payload}', QoS={}",
-            self.config.topic,
+            topic,
             self.config.qos
         );
 
         self.client.publish(msg).with_context(|| {
-            format!(
-                "Failed to publish message to MQTT topic: {}",
-                self.config.topic
-            )
+            format!("Failed to publish message to MQTT topic: {}", topic)
         })?;
 
         Ok(())

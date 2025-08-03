@@ -73,6 +73,12 @@ pub enum CliCommands {
     },
 }
 
+#[derive(clap::ValueEnum, Debug, Clone, PartialEq)]
+pub enum MqttFormat {
+    Json,
+    Simple,
+}
+
 #[derive(Subcommand, Debug, Clone, PartialEq)]
 pub enum DaemonOutput {
     /// Continuously read metrics and print them to the standard output (console).
@@ -83,6 +89,9 @@ pub enum DaemonOutput {
         /// If not provided, "mqtt.yaml" is loaded from the current directory.
         #[arg(long, value_name = "PATH")]
         mqtt_config_path: Option<String>,
+        /// Output format for MQTT messages
+        #[arg(long, value_enum, default_value_t = MqttFormat::Json)]
+        format: MqttFormat,
     },
 }
 
@@ -232,6 +241,50 @@ macro_rules! print_errors {
     };
 }
 
+fn publish_simple_format(
+    publisher: &mqtt::MqttPublisher,
+    base_topic: &str,
+    metric_name: &str,
+    value: &serde_json::Value,
+) {
+    fn publish_recursive(publisher: &mqtt::MqttPublisher, topic: &str, val: &serde_json::Value) {
+        match val {
+            serde_json::Value::Object(map) => {
+                for (k, v) in map {
+                    let sub_topic = format!("{}/{}", topic, k);
+                    publish_recursive(publisher, &sub_topic, v);
+                }
+            }
+            serde_json::Value::Array(arr) => {
+                for (i, v) in arr.iter().enumerate() {
+                    let sub_topic = format!("{}/{}", topic, i);
+                    publish_recursive(publisher, &sub_topic, v);
+                }
+            }
+            serde_json::Value::String(s) => {
+                if let Err(e) = publisher.publish(topic, s) {
+                    error!("Failed to publish message to topic {}: {}", topic, e);
+                }
+            }
+            serde_json::Value::Number(n) => {
+                if let Err(e) = publisher.publish(topic, &n.to_string()) {
+                    error!("Failed to publish message to topic {}: {}", topic, e);
+                }
+            }
+            serde_json::Value::Bool(b) => {
+                if let Err(e) = publisher.publish(topic, &b.to_string()) {
+                    error!("Failed to publish message to topic {}: {}", topic, e);
+                }
+            }
+            serde_json::Value::Null => {
+                // Do not publish null values
+            }
+        }
+    }
+    let root_topic = format!("{}/{}", base_topic, metric_name);
+    publish_recursive(publisher, &root_topic, value);
+}
+
 fn main() -> Result<()> {
     let args = CliArgs::parse();
 
@@ -296,7 +349,10 @@ fn main() -> Result<()> {
 
             let mut mqtt_publisher: Option<mqtt::MqttPublisher> = None;
 
-            if let DaemonOutput::Mqtt { mqtt_config_path } = &output {
+            if let DaemonOutput::Mqtt {
+                mqtt_config_path, ..
+            } = &output
+            {
                 let config_path_str = mqtt_config_path
                     .clone()
                     .unwrap_or_else(|| MQTT_CONFIG_FILE.to_string());
@@ -454,7 +510,7 @@ fn main() -> Result<()> {
                     }
                 }
 
-                match output {
+                match &output {
                     DaemonOutput::Console => {
                         println!("--- Data at {} ---", chrono::Local::now().to_rfc3339());
                         if let Some(status) = fetched_status {
@@ -486,85 +542,191 @@ fn main() -> Result<()> {
                         }
                         println!("--------------------------");
                     }
-                    DaemonOutput::Mqtt { .. } => {
+                    DaemonOutput::Mqtt { format, .. } => {
                         if let Some(publisher) = &mqtt_publisher {
-                            let mut data_to_publish = serde_json::Map::new();
-                            data_to_publish.insert(
-                                "timestamp".to_string(),
-                                json!(chrono::Utc::now().to_rfc3339()),
-                            );
+                            match format {
+                                MqttFormat::Json => {
+                                    let mut data_to_publish = serde_json::Map::new();
+                                    data_to_publish.insert(
+                                        "timestamp".to_string(),
+                                        json!(chrono::Utc::now().to_rfc3339()),
+                                    );
 
-                            if let Some(status) = &fetched_status {
-                                let val = serde_json::to_value(status)
-                                    .with_context(|| "Failed to serialize status to JSON value")?;
-                                data_to_publish.insert("status".to_string(), val);
-                            }
-                            if let Some(soc) = &fetched_soc {
-                                let val = serde_json::to_value(soc)
-                                    .with_context(|| "Failed to serialize soc to JSON value")?;
-                                data_to_publish.insert("soc".to_string(), val);
-                            }
-                            if let Some(mosfet) = &fetched_mosfet {
-                                let val = serde_json::to_value(mosfet)
-                                    .with_context(|| "Failed to serialize mosfet to JSON value")?;
-                                data_to_publish.insert("mosfet".to_string(), val);
-                            }
-                            if let Some(voltage_range) = &fetched_voltage_range {
-                                let val = serde_json::to_value(voltage_range).with_context(
-                                    || "Failed to serialize voltage_range to JSON value",
-                                )?;
-                                data_to_publish.insert("voltage_range".to_string(), val);
-                            }
-                            if let Some(temperature_range) = &fetched_temperature_range {
-                                let val = serde_json::to_value(temperature_range).with_context(
-                                    || "Failed to serialize temperature_range to JSON value",
-                                )?;
-                                data_to_publish.insert("temperature_range".to_string(), val);
-                            }
-                            if let Some(cell_voltages) = &fetched_cell_voltages {
-                                let val = serde_json::to_value(cell_voltages).with_context(
-                                    || "Failed to serialize cell_voltages to JSON value",
-                                )?;
-                                data_to_publish.insert("cell_voltages".to_string(), val);
-                            }
-                            if let Some(cell_temperatures) = &fetched_cell_temperatures {
-                                let val = serde_json::to_value(cell_temperatures).with_context(
-                                    || "Failed to serialize cell_temperatures to JSON value",
-                                )?;
-                                data_to_publish.insert("cell_temperatures".to_string(), val);
-                            }
-                            if let Some(balancing) = &fetched_balancing {
-                                let val = serde_json::to_value(balancing).with_context(
-                                    || "Failed to serialize balancing to JSON value",
-                                )?;
-                                data_to_publish.insert("balancing".to_string(), val);
-                            }
-                            if let Some(errors) = &fetched_errors {
-                                let val = serde_json::to_value(errors)
-                                    .with_context(|| "Failed to serialize errors to JSON value")?;
-                                data_to_publish.insert("errors".to_string(), val);
-                            }
-
-                            // Only publish if there's more than just the timestamp
-                            if data_to_publish.len() > 1 {
-                                match serde_json::to_string(&data_to_publish) {
-                                    Ok(json_payload) => {
-                                        info!(
-                                            "MQTT output: Attempting to publish data: {}",
-                                            json_payload
-                                        );
-                                        if let Err(e) = publisher.publish(&json_payload) {
-                                            error!("Failed to publish data to MQTT: {:?}", e);
-                                        } else {
-                                            info!("Successfully published data to MQTT.");
-                                        }
+                                    if let Some(status) = &fetched_status {
+                                        let val = serde_json::to_value(status).with_context(
+                                            || "Failed to serialize status to JSON value",
+                                        )?;
+                                        data_to_publish.insert("status".to_string(), val);
                                     }
-                                    Err(e) => {
-                                        error!("Failed to serialize data to JSON string: {}", e);
+                                    if let Some(soc) = &fetched_soc {
+                                        let val = serde_json::to_value(soc).with_context(
+                                            || "Failed to serialize soc to JSON value",
+                                        )?;
+                                        data_to_publish.insert("soc".to_string(), val);
+                                    }
+                                    if let Some(mosfet) = &fetched_mosfet {
+                                        let val = serde_json::to_value(mosfet).with_context(
+                                            || "Failed to serialize mosfet to JSON value",
+                                        )?;
+                                        data_to_publish.insert("mosfet".to_string(), val);
+                                    }
+                                    if let Some(voltage_range) = &fetched_voltage_range {
+                                        let val = serde_json::to_value(voltage_range).with_context(
+                                            || "Failed to serialize voltage_range to JSON value",
+                                        )?;
+                                        data_to_publish.insert("voltage_range".to_string(), val);
+                                    }
+                                    if let Some(temperature_range) = &fetched_temperature_range {
+                                        let val = serde_json::to_value(temperature_range)
+                                            .with_context(|| {
+                                                "Failed to serialize temperature_range to JSON value"
+                                            })?;
+                                        data_to_publish
+                                            .insert("temperature_range".to_string(), val);
+                                    }
+                                    if let Some(cell_voltages) = &fetched_cell_voltages {
+                                        let val = serde_json::to_value(cell_voltages)
+                                            .with_context(|| {
+                                                "Failed to serialize cell_voltages to JSON value"
+                                            })?;
+                                        data_to_publish.insert("cell_voltages".to_string(), val);
+                                    }
+                                    if let Some(cell_temperatures) = &fetched_cell_temperatures {
+                                        let val = serde_json::to_value(cell_temperatures)
+                                            .with_context(|| {
+                                                "Failed to serialize cell_temperatures to JSON value"
+                                            })?;
+                                        data_to_publish
+                                            .insert("cell_temperatures".to_string(), val);
+                                    }
+                                    if let Some(balancing) = &fetched_balancing {
+                                        let val = serde_json::to_value(balancing).with_context(
+                                            || "Failed to serialize balancing to JSON value",
+                                        )?;
+                                        data_to_publish.insert("balancing".to_string(), val);
+                                    }
+                                    if let Some(errors) = &fetched_errors {
+                                        let val = serde_json::to_value(errors).with_context(
+                                            || "Failed to serialize errors to JSON value",
+                                        )?;
+                                        data_to_publish.insert("errors".to_string(), val);
+                                    }
+
+                                    // Only publish if there's more than just the timestamp
+                                    if data_to_publish.len() > 1 {
+                                        match serde_json::to_string(&data_to_publish) {
+                                            Ok(json_payload) => {
+                                                info!(
+                                                    "MQTT output: Attempting to publish data: {}",
+                                                    json_payload
+                                                );
+                                                if let Err(e) =
+                                                    publisher.publish(publisher.topic(), &json_payload)
+                                                {
+                                                    error!(
+                                                        "Failed to publish data to MQTT: {:?}",
+                                                        e
+                                                    );
+                                                } else {
+                                                    info!("Successfully published data to MQTT.");
+                                                }
+                                            }
+                                            Err(e) => {
+                                                error!(
+                                                    "Failed to serialize data to JSON string: {}",
+                                                    e
+                                                );
+                                            }
+                                        }
+                                    } else {
+                                        info!(
+                                            "No data fetched in this cycle to publish via MQTT."
+                                        );
                                     }
                                 }
-                            } else {
-                                info!("No data fetched in this cycle to publish via MQTT.");
+                                MqttFormat::Simple => {
+                                    let base_topic = publisher.topic();
+                                    if let Some(status) = &fetched_status {
+                                        if let Ok(value) = serde_json::to_value(status) {
+                                            publish_simple_format(
+                                                publisher, base_topic, "status", &value,
+                                            );
+                                        }
+                                    }
+                                    if let Some(soc) = &fetched_soc {
+                                        if let Ok(value) = serde_json::to_value(soc) {
+                                            publish_simple_format(
+                                                publisher, base_topic, "soc", &value,
+                                            );
+                                        }
+                                    }
+                                    if let Some(mosfet) = &fetched_mosfet {
+                                        if let Ok(value) = serde_json::to_value(mosfet) {
+                                            publish_simple_format(
+                                                publisher, base_topic, "mosfet", &value,
+                                            );
+                                        }
+                                    }
+                                    if let Some(voltage_range) = &fetched_voltage_range {
+                                        if let Ok(value) = serde_json::to_value(voltage_range) {
+                                            publish_simple_format(
+                                                publisher,
+                                                base_topic,
+                                                "voltage_range",
+                                                &value,
+                                            );
+                                        }
+                                    }
+                                    if let Some(temperature_range) = &fetched_temperature_range {
+                                        if let Ok(value) = serde_json::to_value(temperature_range)
+                                        {
+                                            publish_simple_format(
+                                                publisher,
+                                                base_topic,
+                                                "temperature_range",
+                                                &value,
+                                            );
+                                        }
+                                    }
+                                    if let Some(cell_voltages) = &fetched_cell_voltages {
+                                        if let Ok(value) = serde_json::to_value(cell_voltages) {
+                                            publish_simple_format(
+                                                publisher,
+                                                base_topic,
+                                                "cell_voltages",
+                                                &value,
+                                            );
+                                        }
+                                    }
+                                    if let Some(cell_temperatures) = &fetched_cell_temperatures {
+                                        if let Ok(value) = serde_json::to_value(cell_temperatures)
+                                        {
+                                            publish_simple_format(
+                                                publisher,
+                                                base_topic,
+                                                "cell_temperatures",
+                                                &value,
+                                            );
+                                        }
+                                    }
+                                    if let Some(balancing) = &fetched_balancing {
+                                        if let Ok(value) = serde_json::to_value(balancing) {
+                                            publish_simple_format(
+                                                publisher,
+                                                base_topic,
+                                                "balancing",
+                                                &value,
+                                            );
+                                        }
+                                    }
+                                    if let Some(errors) = &fetched_errors {
+                                        if let Ok(value) = serde_json::to_value(errors) {
+                                            publish_simple_format(
+                                                publisher, base_topic, "errors", &value,
+                                            );
+                                        }
+                                    }
+                                }
                             }
                         } else {
                             warn!(
