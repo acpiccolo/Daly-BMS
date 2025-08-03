@@ -90,7 +90,7 @@ pub enum DaemonOutput {
         #[arg(long, value_name = "PATH")]
         mqtt_config_path: Option<String>,
         /// Output format for MQTT messages
-        #[arg(long, value_enum, default_value_t = MqttFormat::Json)]
+        #[arg(long, value_enum, default_value_t = MqttFormat::Simple)]
         format: MqttFormat,
     },
 }
@@ -620,8 +620,8 @@ fn main() -> Result<()> {
                                                     "MQTT output: Attempting to publish data: {}",
                                                     json_payload
                                                 );
-                                                if let Err(e) =
-                                                    publisher.publish(publisher.topic(), &json_payload)
+                                                if let Err(e) = publisher
+                                                    .publish(publisher.topic(), &json_payload)
                                                 {
                                                     error!(
                                                         "Failed to publish data to MQTT: {:?}",
@@ -639,9 +639,7 @@ fn main() -> Result<()> {
                                             }
                                         }
                                     } else {
-                                        info!(
-                                            "No data fetched in this cycle to publish via MQTT."
-                                        );
+                                        info!("No data fetched in this cycle to publish via MQTT.");
                                     }
                                 }
                                 MqttFormat::Simple => {
@@ -678,8 +676,7 @@ fn main() -> Result<()> {
                                         }
                                     }
                                     if let Some(temperature_range) = &fetched_temperature_range {
-                                        if let Ok(value) = serde_json::to_value(temperature_range)
-                                        {
+                                        if let Ok(value) = serde_json::to_value(temperature_range) {
                                             publish_simple_format(
                                                 publisher,
                                                 base_topic,
@@ -699,8 +696,7 @@ fn main() -> Result<()> {
                                         }
                                     }
                                     if let Some(cell_temperatures) = &fetched_cell_temperatures {
-                                        if let Ok(value) = serde_json::to_value(cell_temperatures)
-                                        {
+                                        if let Ok(value) = serde_json::to_value(cell_temperatures) {
                                             publish_simple_format(
                                                 publisher,
                                                 base_topic,

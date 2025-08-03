@@ -138,9 +138,9 @@ impl MqttPublisher {
             self.config.qos
         );
 
-        self.client.publish(msg).with_context(|| {
-            format!("Failed to publish message to MQTT topic: {}", topic)
-        })?;
+        self.client
+            .publish(msg)
+            .with_context(|| format!("Failed to publish message to MQTT topic: {}", topic))?;
 
         Ok(())
     }
