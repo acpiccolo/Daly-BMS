@@ -183,21 +183,6 @@ dalybms daemon [OPTIONS]
     *   If `all` is included, all available metrics will be fetched.
     *   Default: "soc,status" (Note: The current implementation of daemon mode primarily supports `status`, `soc`, `voltages`, `temperatures`, and `all`. Other metrics specified in a custom list might only be logged as "Fetching metric: <name>" without specific data parsing in the output yet).
 
-### MQTT Configuration (`mqtt.yaml`)
-
-When using `--output mqtt`, the tool requires a configuration file named `mqtt.yaml` in the root directory where you run the `dalybms` command.
-
-This file contains details for connecting to your MQTT broker:
-
-*   `uri`: (String) MQTT broker server uri (e.g., mqtt://localhost:1883).
-*   `username`: (String, Optional) Username for MQTT authentication.
-*   `password`: (String, Optional) Password for MQTT authentication.
-*   `topic`: (String, Optional) Base MQTT topic to publish data to. Defaults to "dalybms" if not set.
-*   `qos` (Integer, Optional): MQTT Quality of Service level (0, 1, or 2). Defaults to 0 if not set.
-*   `client_id`: (String, Optional) Custom client ID for this connection. If blank or omitted, a default ID (e.g., "dalybms-<random_suffix>") will be generated.
-
-Please refer to the example `mqtt.yaml` file in the repository for exact formatting and more comments.
-
 ### Daemon Mode Examples
 
 1.  **Console Output:** Fetch SOC and general status every 30 seconds and print to console.
@@ -218,6 +203,48 @@ Please refer to the example `mqtt.yaml` file in the repository for exact formatt
     password: "your_password" # Optional
     topic: "dalybms" # Optional
     client_id: "dalybms_1" # Optional
+    ```
+
+### MQTT Configuration (`mqtt.yaml`)
+
+When using `--output mqtt`, the tool requires a configuration file named `mqtt.yaml` in the root directory where you run the `dalybms` command.
+
+This file contains details for connecting to your MQTT broker:
+
+*   `uri`: (String) MQTT broker server uri (e.g., mqtt://localhost:1883).
+*   `username`: (String, Optional) Username for MQTT authentication.
+*   `password`: (String, Optional) Password for MQTT authentication.
+*   `topic`: (String, Optional) Base MQTT topic to publish data to. Defaults to "dalybms" if not set.
+*   `qos` (Integer, Optional): MQTT Quality of Service level (0, 1, or 2). Defaults to 0 if not set.
+*   `client_id`: (String, Optional) Custom client ID for this connection. If blank or omitted, a default ID (e.g., "dalybms-<random_suffix>") will be generated.
+
+Please refer to the example `mqtt.yaml` file in the repository for exact formatting and more comments.
+
+### MQTT Output Formats
+
+When using MQTT, you can specify the output format using the `--format` option:
+
+*   `--format simple` (Default): Publishes each data point as a separate value on a sub-topic. This is ideal for systems that expect simple key-value pairs (e.g., Home Assistant MQTT sensors).
+    ```bash
+    dalybms daemon --output mqtt --format simple --metrics all
+    ```
+    Example messages published:
+    - Topic: `dalybms/soc/total_voltage`, Payload: `53.6`
+    - Topic: `dalybms/soc/current`, Payload: `0.0`
+    - Topic: `dalybms/soc/soc_percent`, Payload: `87.5`
+    - Topic: `dalybms/status/cells`, Payload: `16`
+
+*   `--format json`: Publishes a single JSON payload to the base topic. This is useful for integrations that can parse complex JSON objects.
+    ```bash
+    dalybms daemon --output mqtt --format json --metrics all
+    ```
+    Example payload on topic `dalybms`:
+    ```json
+    {
+      "timestamp": "2023-10-27T10:00:00Z",
+      "soc": {"total_voltage": 53.6, "current": 0.0, "soc_percent": 87.5},
+      "status": {"cells": 16, "temperature_sensors": 2, ...}
+    }
     ```
 
 ## Library Usage
