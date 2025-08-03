@@ -346,9 +346,9 @@ impl DalyBMS {
     ///
     /// # Returns
     ///
-    /// A `Result` containing a `Vec<f32>` of cell voltages or an `Error`.
+    /// A `Result` containing a `CellVoltages` of cell voltages or an `Error`.
     /// Returns `Error::StatusError` if `get_status()` was not called previously.
-    pub fn get_cell_voltages(&mut self) -> Result<Vec<f32>> {
+    pub fn get_cell_voltages(&mut self) -> Result<CellVoltages> {
         log::trace!("get cell voltages");
         let n_cells = if let Some(status) = &self.status {
             status.cells

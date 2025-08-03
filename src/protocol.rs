@@ -3,6 +3,25 @@ use crate::Error;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
+#[cfg(feature = "serde")]
+mod util {
+    use serde::Serializer;
+
+    pub fn f32_1_digits<S>(x: &f32, s: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        s.serialize_f64((*x as f64 * 10.0).round() / 10.0)
+    }
+
+    pub fn f32_3_digits<S>(x: &f32, s: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        s.serialize_f64((*x as f64 * 1000.0).round() / 1000.0)
+    }
+}
+
 /// Represents the sender/receiver address in a BMS command.
 /// Currently, only the Host address is defined, as the BMS address can vary.
 #[derive(Debug)]
@@ -86,11 +105,14 @@ fn validate_checksum(buffer: &[u8]) -> std::result::Result<(), Error> {
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct Soc {
     /// Total battery voltage in Volts.
+    #[cfg_attr(feature = "serde", serde(serialize_with = "util::f32_3_digits"))]
     pub total_voltage: f32,
     /// Battery current in Amperes.
     /// Negative values indicate charging, positive values indicate discharging.
+    #[cfg_attr(feature = "serde", serde(serialize_with = "util::f32_3_digits"))]
     pub current: f32,
     /// State of Charge percentage (0.0 - 100.0%).
+    #[cfg_attr(feature = "serde", serde(serialize_with = "util::f32_1_digits"))]
     pub soc_percent: f32,
 }
 
@@ -146,10 +168,12 @@ impl Soc {
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct CellVoltageRange {
     /// Highest cell voltage in Volts.
+    #[cfg_attr(feature = "serde", serde(serialize_with = "util::f32_3_digits"))]
     pub highest_voltage: f32,
     /// Cell number with the highest voltage.
     pub highest_cell: u8,
     /// Lowest cell voltage in Volts.
+    #[cfg_attr(feature = "serde", serde(serialize_with = "util::f32_3_digits"))]
     pub lowest_voltage: f32,
     /// Cell number with the lowest voltage.
     pub lowest_cell: u8,
@@ -287,6 +311,7 @@ pub struct MosfetStatus {
     /// Number of BMS cycles (e.g., charge/discharge cycles).
     pub bms_cycles: u8,
     /// Remaining battery capacity in Ampere-hours (Ah).
+    #[cfg_attr(feature = "serde", serde(serialize_with = "util::f32_3_digits"))]
     pub capacity_ah: f32,
 }
 
@@ -346,6 +371,20 @@ impl MosfetStatus {
             ]) as f32
                 / 1000.0,
         })
+    }
+}
+
+impl std::fmt::Display for MosfetStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "mode: {:?}, charging_mosfet: {}, discharging_mosfet: {}, bms_cycles: {}, capacity_ah: {:.3}Ah",
+            self.mode,
+            self.charging_mosfet,
+            self.discharging_mosfet,
+            self.bms_cycles,
+            self.capacity_ah
+        )
     }
 }
 
@@ -448,7 +487,11 @@ impl Status {
 
 /// Represents a command to request individual cell voltages.
 /// The BMS returns cell voltages in multiple frames.
-pub struct CellVoltages;
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct CellVoltages {
+    voltages: Vec<f32>,
+}
 
 impl CellVoltages {
     /// Creates a request frame to read individual cell voltages from the BMS.
@@ -494,9 +537,9 @@ impl CellVoltages {
     /// A `Result` containing a `Vec<f32>` of cell voltages or an `Error` if decoding fails.
     ///
     /// This is a low-level function. Users might prefer client methods.
-    pub fn decode(rx_buffer: &[u8], n_cells: u8) -> std::result::Result<Vec<f32>, Error> {
+    pub fn decode(rx_buffer: &[u8], n_cells: u8) -> std::result::Result<Self, Error> {
         validate_len(rx_buffer, Self::reply_size(n_cells))?;
-        let mut result = Vec::with_capacity(n_cells as usize);
+        let mut voltages = Vec::with_capacity(n_cells as usize);
         let mut n_cell = 1;
 
         for n_frame in 1..=Self::n_frames(n_cells) {
@@ -514,14 +557,22 @@ impl CellVoltages {
             for i in 0..3 {
                 let volt = u16::from_be_bytes([part[5 + i + i], part[6 + i + i]]) as f32 / 1000.0;
                 log::trace!("Frame #{} cell #{} volt={}", n_frame, n_cell, volt);
-                result.push(volt);
+                voltages.push(volt);
                 n_cell += 1;
                 if n_cell > n_cells {
                     break;
                 }
             }
         }
-        Ok(result)
+        Ok(Self { voltages })
+    }
+}
+
+impl std::ops::Deref for CellVoltages {
+    type Target = [f32];
+
+    fn deref(&self) -> &[f32] {
+        &self.voltages
     }
 }
 
@@ -1445,8 +1496,8 @@ mod tests {
 
         match CellVoltages::decode(&combined_bytes, 4) {
             Ok(decoded) => {
-                assert_eq!(decoded.len(), expected_voltages.len());
-                for (d, e) in decoded.iter().zip(expected_voltages.iter()) {
+                assert_eq!((*decoded).len(), expected_voltages.len());
+                for (d, e) in (*decoded).iter().zip(expected_voltages.iter()) {
                     assert!((d - e).abs() < f32::EPSILON);
                 }
             }
