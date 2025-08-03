@@ -198,6 +198,33 @@ This file contains details for connecting to your MQTT broker:
 
 Please refer to the example `mqtt.yaml` file in the repository for exact formatting and more comments.
 
+### MQTT Output Formats
+
+When using MQTT, you can specify the output format using the `--format` option:
+
+*   `--format json` (Default): Publishes a single JSON payload to the base topic. This is useful for integrations that can parse complex JSON objects.
+    ```bash
+    dalybms daemon --output mqtt --format json --metrics all
+    ```
+    Example payload on topic `dalybms`:
+    ```json
+    {
+      "timestamp": "2023-10-27T10:00:00Z",
+      "soc": {"total_voltage": 53.6, "current": -0.0, "soc_percent": 87.5},
+      "status": {"cells": 16, "temperature_sensors": 2, ...}
+    }
+    ```
+
+*   `--format simple`: Publishes each data point as a separate value on a sub-topic. This is ideal for systems that expect simple key-value pairs (e.g., Home Assistant MQTT sensors).
+    ```bash
+    dalybms daemon --output mqtt --format simple --metrics all
+    ```
+    Example messages published:
+    - Topic: `dalybms/soc/total_voltage`, Payload: `53.6`
+    - Topic: `dalybms/soc/current`, Payload: `-0.0`
+    - Topic: `dalybms/soc/soc_percent`, Payload: `87.5`
+    - Topic: `dalybms/status/cells`, Payload: `16`
+
 ### Daemon Mode Examples
 
 1.  **Console Output:** Fetch SOC and general status every 30 seconds and print to console.
