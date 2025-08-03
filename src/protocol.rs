@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "serde")]
 mod util {
-    use serde::Serializer;
+    use serde::{ser::SerializeSeq, Serializer};
 
     pub fn f32_1_digits<S>(x: &f32, s: S) -> Result<S::Ok, S::Error>
     where
@@ -19,6 +19,18 @@ mod util {
         S: Serializer,
     {
         s.serialize_f64((*x as f64 * 1000.0).round() / 1000.0)
+    }
+
+    pub fn vec_f32_3_digits<S>(vec: &Vec<f32>, s: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut seq = s.serialize_seq(Some(vec.len()))?;
+        for e in vec {
+            let val = (*e as f64 * 1000.0).round() / 1000.0;
+            seq.serialize_element(&val)?;
+        }
+        seq.end()
     }
 }
 
@@ -489,7 +501,13 @@ impl Status {
 /// The BMS returns cell voltages in multiple frames.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-pub struct CellVoltages(Vec<f32>);
+pub struct CellVoltages(
+    #[cfg_attr(
+        feature = "serde",
+        serde(serialize_with = "util::vec_f32_3_digits")
+    )]
+    Vec<f32>,
+);
 
 impl CellVoltages {
     /// Creates a request frame to read individual cell voltages from the BMS.
