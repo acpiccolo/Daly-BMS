@@ -1,131 +1,12 @@
 use anyhow::{Context, Result, bail};
-use clap::{Parser, Subcommand};
-use clap_verbosity_flag::{InfoLevel, Verbosity};
+use clap::Parser;
 use flexi_logger::{Logger, LoggerHandle};
 use log::*;
 use serde_json::json;
-use std::{ops::Deref, panic, time::Duration}; // For MQTT payload construction
+use std::{ops::Deref, panic};
 
-mod mqtt; // Added MQTT module
-
-const MQTT_CONFIG_FILE: &str = "mqtt.yaml";
-
-fn default_device_name() -> String {
-    if cfg!(target_os = "windows") {
-        String::from("COM1")
-    } else {
-        String::from("/dev/ttyUSB0")
-    }
-}
-
-#[derive(Subcommand, Debug, Clone, PartialEq)]
-pub enum CliCommands {
-    /// Show general BMS status: cell count, temperature sensors, charger/load status, cycles
-    Status,
-    /// Show total voltage, current, and State of Charge (SOC)
-    Soc,
-    /// Show MOSFET status: mode, charge/discharge state, capacity, and BMS cycles
-    Mosfet,
-    /// Show highest/lowest cell voltage and corresponding cell number
-    VoltageRange,
-    /// Show highest/lowest temperature and corresponding sensor number
-    TemperatureRange,
-    /// Show individual cell voltages (requires BMS status to be fetched first or will fetch it)
-    CellVoltages,
-    /// Show individual temperature sensor readings (requires BMS status to be fetched first or will fetch it)
-    CellTemperatures,
-    /// Show cell balancing status (requires BMS status to be fetched first or will fetch it)
-    Balancing,
-    /// Show current BMS error codes
-    Errors,
-    /// Show all available BMS information by running most read commands
-    All,
-    /// Set State of Charge (SOC) in percent
-    SetSoc {
-        /// The desired SOC value as a percentage (e.g., 75.5 for 75.5%)
-        soc_percent: f32,
-    },
-    /// Enable or disable the discharge MOSFET
-    SetDischargeMosfet {
-        /// Enable the discharge MOSFET. If this flag is not present, it will be disabled.
-        #[clap(long, short, action)]
-        enable: bool,
-    },
-    /// Enable or disable the charge MOSFET
-    SetChargeMosfet {
-        /// Enable the charge MOSFET. If this flag is not present, it will be disabled.
-        #[clap(long, short, action)]
-        enable: bool,
-    },
-    /// Reset the BMS to factory settings (Use with caution!)
-    Reset,
-    /// Run in daemon mode, periodically fetching and outputting metrics
-    Daemon {
-        /// Output destination for metrics
-        #[command(subcommand)]
-        output: DaemonOutput,
-        /// Interval for fetching metrics (e.g., "10s", "1m")
-        #[clap(long, short, value_parser = humantime::parse_duration, default_value = "10s")]
-        interval: Duration,
-        /// Comma-separated list of metrics to fetch (e.g., status,soc,voltages,temperatures or all)
-        #[clap(long, short, use_value_delimiter = true, default_value = "status,soc")]
-        metrics: Vec<String>,
-    },
-}
-
-#[derive(clap::ValueEnum, Debug, Clone, PartialEq)]
-pub enum MqttFormat {
-    Json,
-    Simple,
-}
-
-#[derive(Subcommand, Debug, Clone, PartialEq)]
-pub enum DaemonOutput {
-    /// Continuously read metrics and print them to the standard output (console).
-    Console,
-    /// Continuously read metrics and publish them to an MQTT broker.
-    Mqtt {
-        /// Path to an optional YAML file for MQTT configuration.
-        /// If not provided, "mqtt.yaml" is loaded from the current directory.
-        #[arg(long, value_name = "PATH")]
-        mqtt_config_path: Option<String>,
-        /// Output format for MQTT messages
-        #[arg(long, value_enum, default_value_t = MqttFormat::Simple)]
-        format: MqttFormat,
-    },
-}
-
-const fn about_text() -> &'static str {
-    "daly bms command line tool"
-}
-
-#[derive(Parser, Debug)]
-#[command(version, about=about_text(), long_about = None)]
-struct CliArgs {
-    #[command(flatten)]
-    verbose: Verbosity<InfoLevel>,
-
-    /// Serial port device path (e.g., /dev/ttyUSB0 on Linux, COM1 on Windows)
-    #[arg(short, long, default_value_t = default_device_name())]
-    device: String,
-
-    #[command(subcommand)]
-    command: CliCommands,
-
-    /// Timeout for serial I/O operations (e.g., "100ms", "1s", "2s 500ms")
-    #[arg(value_parser = humantime::parse_duration, long, default_value = "100ms")]
-    timeout: Duration,
-
-    // Some USB - RS485 dongles requires at least 10ms to switch between TX and RX, so use a save delay between frames
-    /// Delay between sending multiple commands to the BMS (e.g., "50ms", "100ms")
-    /// (useful for some serial adapters that need time to switch between TX/RX)
-    #[arg(value_parser = humantime::parse_duration, long, default_value = "15ms")]
-    delay: Duration,
-
-    /// Number of retries for failed commands
-    #[arg(long, default_value = "3")]
-    retries: u8,
-}
+mod commandline;
+mod mqtt;
 
 fn logging_init(loglevel: LevelFilter) -> LoggerHandle {
     let log_handle = Logger::try_with_env_or_str(loglevel.as_str())
@@ -286,7 +167,7 @@ fn publish_simple_format(
 }
 
 fn main() -> Result<()> {
-    let args = CliArgs::parse();
+    let args = commandline::CliArgs::parse();
 
     let _log_handle = logging_init(args.verbose.log_level_filter());
 
@@ -297,25 +178,25 @@ fn main() -> Result<()> {
     bms.set_retry(args.retries);
 
     match args.command {
-        CliCommands::Status => print_status!(bms),
-        CliCommands::Soc => print_soc!(bms),
-        CliCommands::VoltageRange => print_voltage_range!(bms),
-        CliCommands::TemperatureRange => print_temperature_range!(bms),
-        CliCommands::Mosfet => print_mosfet_status!(bms),
-        CliCommands::CellVoltages => {
+        commandline::CliCommands::Status => print_status!(bms),
+        commandline::CliCommands::Soc => print_soc!(bms),
+        commandline::CliCommands::VoltageRange => print_voltage_range!(bms),
+        commandline::CliCommands::TemperatureRange => print_temperature_range!(bms),
+        commandline::CliCommands::Mosfet => print_mosfet_status!(bms),
+        commandline::CliCommands::CellVoltages => {
             let _ = bms.get_status().with_context(|| "Cannot get status")?;
             print_cell_voltages!(bms);
         }
-        CliCommands::CellTemperatures => {
+        commandline::CliCommands::CellTemperatures => {
             let _ = bms.get_status().with_context(|| "Cannot get status")?;
             print_cell_temperatures!(bms);
         }
-        CliCommands::Balancing => {
+        commandline::CliCommands::Balancing => {
             let _ = bms.get_status().with_context(|| "Cannot get status")?;
             print_balancing_status!(bms);
         }
-        CliCommands::Errors => print_errors!(bms),
-        CliCommands::All => {
+        commandline::CliCommands::Errors => print_errors!(bms),
+        commandline::CliCommands::All => {
             print_status!(bms);
             print_soc!(bms);
             print_voltage_range!(bms);
@@ -327,17 +208,17 @@ fn main() -> Result<()> {
             print_errors!(bms);
             print_soc!(bms);
         }
-        CliCommands::SetSoc { soc_percent } => {
+        commandline::CliCommands::SetSoc { soc_percent } => {
             bms.set_soc(soc_percent).with_context(|| "Cannot set SOC")?
         }
-        CliCommands::SetChargeMosfet { enable } => bms
+        commandline::CliCommands::SetChargeMosfet { enable } => bms
             .set_charge_mosfet(enable)
             .with_context(|| "Cannot set charge mosfet")?,
-        CliCommands::SetDischargeMosfet { enable } => bms
+        commandline::CliCommands::SetDischargeMosfet { enable } => bms
             .set_discharge_mosfet(enable)
             .with_context(|| "Cannot set discharge mosfet")?,
-        CliCommands::Reset => bms.reset()?,
-        CliCommands::Daemon {
+        commandline::CliCommands::Reset => bms.reset()?,
+        commandline::CliCommands::Daemon {
             output,
             interval,
             metrics,
@@ -349,18 +230,11 @@ fn main() -> Result<()> {
 
             let mut mqtt_publisher: Option<mqtt::MqttPublisher> = None;
 
-            if let DaemonOutput::Mqtt {
-                mqtt_config_path, ..
-            } = &output
-            {
-                let config_path_str = mqtt_config_path
-                    .clone()
-                    .unwrap_or_else(|| MQTT_CONFIG_FILE.to_string());
-
-                let config = mqtt::load_mqtt_config(&config_path_str).with_context(|| {
-                    format!("Failed to open MQTT config file at '{config_path_str}'")
+            if let commandline::DaemonOutput::Mqtt { config_file, .. } = &output {
+                let config = mqtt::MqttConfig::load(&config_file).with_context(|| {
+                    format!("Failed to open MQTT config file at '{config_file}'")
                 })?;
-                info!("Successfully loaded MQTT config from {config_path_str}: {config:?}");
+                info!("Successfully loaded MQTT config from {config_file}: {config:?}");
                 let publisher = mqtt::MqttPublisher::new(config)
                     .with_context(|| "Failed to create MQTT publisher")?;
                 info!("MQTT Publisher created successfully.");
@@ -511,7 +385,7 @@ fn main() -> Result<()> {
                 }
 
                 match &output {
-                    DaemonOutput::Console => {
+                    commandline::DaemonOutput::Console => {
                         println!("--- Data at {} ---", chrono::Local::now().to_rfc3339());
                         if let Some(status) = fetched_status {
                             println!("{status:?}");
@@ -542,10 +416,10 @@ fn main() -> Result<()> {
                         }
                         println!("--------------------------");
                     }
-                    DaemonOutput::Mqtt { format, .. } => {
+                    commandline::DaemonOutput::Mqtt { format, .. } => {
                         if let Some(publisher) = &mqtt_publisher {
                             match format {
-                                MqttFormat::Json => {
+                                commandline::MqttFormat::Json => {
                                     let mut data_to_publish = serde_json::Map::new();
                                     data_to_publish.insert(
                                         "timestamp".to_string(),
@@ -642,7 +516,7 @@ fn main() -> Result<()> {
                                         info!("No data fetched in this cycle to publish via MQTT.");
                                     }
                                 }
-                                MqttFormat::Simple => {
+                                commandline::MqttFormat::Simple => {
                                     let base_topic = publisher.topic();
                                     if let Some(status) = &fetched_status {
                                         if let Ok(value) = serde_json::to_value(status) {
