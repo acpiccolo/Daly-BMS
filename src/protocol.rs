@@ -564,7 +564,7 @@ impl CellVoltages {
             validate_checksum(part)?;
             for i in 0..3 {
                 let volt = u16::from_be_bytes([part[5 + i + i], part[6 + i + i]]) as f32 / 1000.0;
-                log::trace!("Frame #{} cell #{} volt={}", n_frame, n_cell, volt);
+                log::trace!("Frame #{n_frame} cell #{n_cell} volt={volt}");
                 voltages.push(volt);
                 n_cell += 1;
                 if n_cell > n_cells {
@@ -652,7 +652,7 @@ impl CellTemperatures {
             validate_checksum(part)?;
             for i in 0..7 {
                 let temperature = part[5 + i] as i32 - 40;
-                log::trace!("Frame #{} sensor #{} °C={}", n_frame, n_sensor, temperature);
+                log::trace!("Frame #{n_frame} sensor #{n_sensor} °C={temperature}");
                 result.push(temperature);
                 n_sensor += 1;
                 if n_sensor > n_sensors {

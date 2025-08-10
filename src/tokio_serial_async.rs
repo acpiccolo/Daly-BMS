@@ -203,20 +203,20 @@ impl DalyBMS {
         loop {
             log::trace!("read to see if there is any pending data");
             let pending = self.serial.bytes_to_read()?;
-            log::trace!("got {} pending bytes", pending);
+            log::trace!("got {pending} pending bytes");
             if pending > 0 {
                 let mut buf: Vec<u8> = vec![0; 64]; // Temporary buffer to drain
                 let received =
                     tokio::time::timeout(self.io_timeout, self.serial.read(buf.as_mut_slice()))
                         .await??;
-                log::trace!("{} pending bytes consumed", received);
+                log::trace!("{received} pending bytes consumed");
             } else {
                 break;
             }
         }
         self.serial_await_delay().await;
 
-        log::trace!("write bytes: {:02X?}", tx_buffer);
+        log::trace!("write bytes: {tx_buffer:02X?}");
         tokio::time::timeout(self.io_timeout, self.serial.write_all(tx_buffer)).await??;
 
         // Flushing is usually not necessary and can sometimes cause issues.
@@ -237,7 +237,7 @@ impl DalyBMS {
 
         self.last_execution = Instant::now(); // Update last execution time
 
-        log::trace!("receive_bytes: {:02X?}", rx_buffer);
+        log::trace!("receive_bytes: {rx_buffer:02X?}");
         Ok(rx_buffer)
     }
 
@@ -256,7 +256,7 @@ impl DalyBMS {
     ///
     /// A `Result` indicating success. This operation currently always succeeds.
     pub fn set_timeout(&mut self, timeout: Duration) -> Result<()> {
-        log::trace!("set timeout to {:?}", timeout);
+        log::trace!("set timeout to {timeout:?}");
         self.io_timeout = timeout;
         Ok(())
     }
@@ -272,9 +272,7 @@ impl DalyBMS {
     pub fn set_delay(&mut self, delay: Duration) {
         if delay < MINIMUM_DELAY {
             log::warn!(
-                "delay {:?} lower minimum {:?}, use minimum",
-                delay,
-                MINIMUM_DELAY
+                "delay {delay:?} lower minimum {MINIMUM_DELAY:?}, use minimum"
             );
             self.delay = MINIMUM_DELAY;
         } else {
@@ -480,7 +478,7 @@ impl DalyBMS {
     ///
     /// An empty `Result` indicating success or an `Error`.
     pub async fn set_discharge_mosfet(&mut self, enable: bool) -> Result<()> {
-        log::trace!("set discharge mosfet to {}", enable);
+        log::trace!("set discharge mosfet to {enable}");
         request_with_retry!(
             self,
             SetDischargeMosfet,
@@ -499,7 +497,7 @@ impl DalyBMS {
     ///
     /// An empty `Result` indicating success or an `Error`.
     pub async fn set_charge_mosfet(&mut self, enable: bool) -> Result<()> {
-        log::trace!("set charge mosfet to {}", enable);
+        log::trace!("set charge mosfet to {enable}");
         request_with_retry!(
             self,
             SetChargeMosfet,
@@ -518,7 +516,7 @@ impl DalyBMS {
     ///
     /// An empty `Result` indicating success or an `Error`.
     pub async fn set_soc(&mut self, soc_percent: f32) -> Result<()> {
-        log::trace!("set SOC to {}", soc_percent);
+        log::trace!("set SOC to {soc_percent}");
         request_with_retry!(
             self,
             SetSoc,

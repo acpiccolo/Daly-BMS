@@ -161,7 +161,7 @@ impl MqttPublisher {
 
         self.client
             .publish(msg)
-            .with_context(|| format!("Failed to publish message to MQTT topic: {}", topic))?;
+            .with_context(|| format!("Failed to publish message to MQTT topic: {topic}"))?;
 
         Ok(())
     }
