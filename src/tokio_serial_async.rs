@@ -75,10 +75,19 @@ pub struct DalyBMS {
 
 macro_rules! request_with_retry {
     ($self:ident, $X:ident, $request_bytes:expr, $reply_size:expr) => {{
-        for t in 0..$self.retries {
-            match $self.send_and_receive($request_bytes, $reply_size).await {
-                Ok(reply_bytes) => match $X::decode(&reply_bytes) {
-                    Ok(result) => return Ok(result),
+        'retry_block: {
+            for t in 0..$self.retries {
+                match $self.send_and_receive($request_bytes, $reply_size).await {
+                    Ok(reply_bytes) => match $X::decode(&reply_bytes) {
+                        Ok(result) => break 'retry_block Ok(result),
+                        Err(err) => {
+                            log::trace!(
+                                "Failed try {} of {}, repeating ({err})",
+                                t + 1,
+                                $self.retries
+                            );
+                        }
+                    },
                     Err(err) => {
                         log::trace!(
                             "Failed try {} of {}, repeating ({err})",
@@ -86,26 +95,28 @@ macro_rules! request_with_retry {
                             $self.retries
                         );
                     }
-                },
-                Err(err) => {
-                    log::trace!(
-                        "Failed try {} of {}, repeating ({err})",
-                        t + 1,
-                        $self.retries
-                    );
                 }
             }
+            Ok($X::decode(
+                &$self.send_and_receive($request_bytes, $reply_size).await?,
+            )?)
         }
-        Ok($X::decode(
-            &$self.send_and_receive($request_bytes, $reply_size).await?,
-        )?)
     }};
 
     ($self:ident, $X:ident, $request_bytes:expr, $reply_size:expr, $decode_arg:expr) => {{
-        for t in 0..$self.retries {
-            match $self.send_and_receive($request_bytes, $reply_size).await {
-                Ok(reply_bytes) => match $X::decode(&reply_bytes, $decode_arg) {
-                    Ok(result) => return Ok(result),
+        'retry_block: {
+            for t in 0..$self.retries {
+                match $self.send_and_receive($request_bytes, $reply_size).await {
+                    Ok(reply_bytes) => match $X::decode(&reply_bytes, $decode_arg) {
+                        Ok(result) => break 'retry_block Ok(result),
+                        Err(err) => {
+                            log::trace!(
+                                "Failed try {} of {}, repeating ({err})",
+                                t + 1,
+                                $self.retries
+                            );
+                        }
+                    },
                     Err(err) => {
                         log::trace!(
                             "Failed try {} of {}, repeating ({err})",
@@ -113,20 +124,13 @@ macro_rules! request_with_retry {
                             $self.retries
                         );
                     }
-                },
-                Err(err) => {
-                    log::trace!(
-                        "Failed try {} of {}, repeating ({err})",
-                        t + 1,
-                        $self.retries
-                    );
                 }
             }
+            Ok($X::decode(
+                &$self.send_and_receive($request_bytes, $reply_size).await?,
+                $decode_arg,
+            )?)
         }
-        Ok($X::decode(
-            &$self.send_and_receive($request_bytes, $reply_size).await?,
-            $decode_arg,
-        )?)
     }};
 }
 
@@ -193,7 +197,9 @@ impl DalyBMS {
     /// Private async helper to send bytes to the serial port.
     /// It handles clearing pending data, awaiting delay, and writing the buffer with timeouts.
     async fn send_bytes(&mut self, tx_buffer: &[u8]) -> Result<()> {
-        // clear all incoming serial to avoid data collision
+        // Before sending a new command, it's crucial to clear any lingering data
+        // in the serial port's read buffer. This prevents a scenario where a previous,
+        // timed-out response could be misinterpreted as the response to the current command.
         loop {
             log::trace!("read to see if there is any pending data");
             let pending = self.serial.bytes_to_read()?;
@@ -226,7 +232,7 @@ impl DalyBMS {
     async fn receive_bytes(&mut self, size: usize) -> Result<Vec<u8>> {
         let mut rx_buffer = vec![0; size];
 
-        log::trace!("read {} bytes", rx_buffer.len());
+        log::trace!("read {size} bytes");
         tokio::time::timeout(self.io_timeout, self.serial.read_exact(&mut rx_buffer)).await??;
 
         self.last_execution = Instant::now(); // Update last execution time

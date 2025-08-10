@@ -52,11 +52,16 @@ pub enum Address {
 /// This is to prevent overwhelming the BMS with requests.
 pub const MINIMUM_DELAY: std::time::Duration = std::time::Duration::from_millis(4);
 
+/// The required length of a request sent to the BMS.
 const TX_BUFFER_LENGTH: usize = 13;
+/// The expected length of a standard response from the BMS.
 const RX_BUFFER_LENGTH: usize = 13;
+/// The start byte that begins every command.
 const START_BYTE: u8 = 0xa5;
+/// The length of the data payload in a standard command.
 const DATA_LENGTH: u8 = 0x08;
 
+/// Creates the header for a request.
 fn create_request_header(address: Address, command: u8) -> Vec<u8> {
     let mut tx_buffer = vec![0; TX_BUFFER_LENGTH];
     tx_buffer[0] = START_BYTE;
@@ -66,6 +71,8 @@ fn create_request_header(address: Address, command: u8) -> Vec<u8> {
     tx_buffer
 }
 
+/// Calculates the checksum for a given buffer.
+/// The checksum is the sum of all bytes in the buffer, wrapping at 256.
 fn calc_crc(buffer: &[u8]) -> u8 {
     let mut checksum: u8 = 0;
     let slice = &buffer[0..buffer.len() - 1];
@@ -75,6 +82,7 @@ fn calc_crc(buffer: &[u8]) -> u8 {
     checksum
 }
 
+/// Calculates and sets the checksum on the last byte of a mutable buffer.
 fn calc_crc_and_set(buffer: &mut [u8]) {
     let len = buffer.len();
     buffer[len - 1] = calc_crc(buffer)
@@ -86,18 +94,20 @@ macro_rules! read_bit {
     };
 }
 
-fn validate_len(buffer: &[u8], reply_size: usize) -> std::result::Result<(), Error> {
-    if buffer.len() < reply_size {
+/// Validates that the buffer length is sufficient.
+fn validate_len(buffer: &[u8], expected_size: usize) -> std::result::Result<(), Error> {
+    if buffer.len() < expected_size {
         log::warn!(
             "Invalid buffer size - required={} received={}",
-            buffer.len(),
-            reply_size
+            expected_size,
+            buffer.len()
         );
         return Err(Error::ReplySizeError);
     }
     Ok(())
 }
 
+/// Validates that the buffer checksum is correct.
 fn validate_checksum(buffer: &[u8]) -> std::result::Result<(), Error> {
     let checksum = calc_crc(buffer);
     if buffer[buffer.len() - 1] != checksum {

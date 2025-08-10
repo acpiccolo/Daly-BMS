@@ -45,7 +45,7 @@ pub enum Error {
     #[error("IO error: {0}")]
     IOError(#[from] std::io::Error),
     /// An error from the `serialport` crate.
-    #[error("Tokio serial error: {0}")] // Note: Typo in original, should be "Serialport error"
+    #[error("Serialport error: {0}")] // Note: Typo in original, should be "Serialport error"
     Serial(#[from] serialport::Error),
 }
 
@@ -125,7 +125,9 @@ impl DalyBMS {
     /// Private helper to send bytes to the serial port.
     /// It handles clearing pending data, awaiting delay, and writing the buffer.
     fn send_bytes(&mut self, tx_buffer: &[u8]) -> Result<()> {
-        // clear all incoming serial to avoid data collision
+        // Before sending a new command, it's crucial to clear any lingering data
+        // in the serial port's read buffer. This prevents a scenario where a previous,
+        // timed-out response could be misinterpreted as the response to the current command.
         loop {
             log::trace!("read to see if there is any pending data");
             let pending = self.serial.bytes_to_read()?;
@@ -157,7 +159,7 @@ impl DalyBMS {
     fn receive_bytes(&mut self, size: usize) -> Result<Vec<u8>> {
         let mut rx_buffer = vec![0; size];
 
-        log::trace!("read {} bytes", rx_buffer.len());
+        log::trace!("read {size} bytes");
         self.serial.read_exact(&mut rx_buffer)?;
 
         self.last_execution = Instant::now(); // Update last execution time after successful read
