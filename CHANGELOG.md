@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.5](https://github.com/acpiccolo/Daly-BMS/compare/v0.1.4...v0.1.5) - 2025-08-11
+
+### Other
+
+- *(deps)* bump crate-ci/typos from 1.34.0 to 1.35.3
+- fix clippy issues
+
 ## [0.1.4](https://github.com/acpiccolo/Daly-BMS/compare/v0.1.3...v0.1.4) - 2025-08-10
 
 ### Fixed
