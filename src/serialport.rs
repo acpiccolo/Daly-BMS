@@ -197,9 +197,7 @@ impl DalyBMS {
     /// * `delay`: The desired minimum delay between commands.
     pub fn set_delay(&mut self, delay: Duration) {
         if delay < MINIMUM_DELAY {
-            log::warn!(
-                "delay {delay:?} lower minimum {MINIMUM_DELAY:?}, use minimum"
-            );
+            log::warn!("delay {delay:?} lower minimum {MINIMUM_DELAY:?}, use minimum");
             self.delay = MINIMUM_DELAY;
         } else {
             self.delay = delay;
