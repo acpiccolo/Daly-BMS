@@ -164,7 +164,7 @@ fn main() -> Result<()> {
 mod tests {
     // use super::*; // Removed as items like default_bms_status are local or directly imported
     use dalybms_lib::protocol::{IOState, Soc as BmsSoc, Status as BmsStatus};
-    use serde_json::{Value as JsonValue, json};
+    use serde_json::{json, Value as JsonValue};
 
     // Helper to create a default BmsStatus for tests
     fn default_bms_status() -> BmsStatus {

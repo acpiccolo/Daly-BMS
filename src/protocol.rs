@@ -35,7 +35,7 @@ use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "serde")]
 mod util {
-    use serde::{Serializer, ser::SerializeSeq};
+    use serde::{ser::SerializeSeq, Serializer};
 
     pub fn f32_1_digits<S>(x: &f32, s: S) -> Result<S::Ok, S::Error>
     where

@@ -1,4 +1,4 @@
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use dalybms_lib::protocol;
 use dalybms_lib::serialport::DalyBMS;
 use log::{error, info, warn};
@@ -195,9 +195,7 @@ pub fn run(
     if let commandline::DaemonOutput::Mqtt { config_file, .. } = &output {
         let config = mqtt::MqttConfig::load(config_file)
             .with_context(|| format!("Failed to open MQTT config file at '{config_file}'"))?;
-        info!(
-            "Successfully loaded MQTT config from {config_file}: {config:?}"
-        );
+        info!("Successfully loaded MQTT config from {config_file}: {config:?}");
         let publisher =
             mqtt::MqttPublisher::new(config).with_context(|| "Failed to create MQTT publisher")?;
         info!("MQTT Publisher created successfully.");
@@ -218,15 +216,16 @@ pub fn run(
                 for &dep in metric.dependencies {
                     if !fetched_data.contains_key(dep)
                         && metrics_to_process.contains(&dep.to_string())
-                        && let Some(dep_metric) = available_metrics.get(dep) {
-                            info!("Fetching dependency '{dep}' for '{metric_name}'");
-                            match (dep_metric.fetch)(&mut bms) {
-                                Ok(data) => {
-                                    fetched_data.insert(dep.to_string(), data);
-                                }
-                                Err(e) => error!("Error fetching dependency '{dep}': {e}"),
+                        && let Some(dep_metric) = available_metrics.get(dep)
+                    {
+                        info!("Fetching dependency '{dep}' for '{metric_name}'");
+                        match (dep_metric.fetch)(&mut bms) {
+                            Ok(data) => {
+                                fetched_data.insert(dep.to_string(), data);
                             }
+                            Err(e) => error!("Error fetching dependency '{dep}': {e}"),
                         }
+                    }
                 }
                 info!("Fetching metric: {metric_name}");
                 match (metric.fetch)(&mut bms) {

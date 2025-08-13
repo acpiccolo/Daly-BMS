@@ -46,8 +46,8 @@ impl MqttConfig {
     }
 
     fn generate_random_string(len: usize) -> String {
-        use rand::Rng;
         use rand::distr::Alphanumeric;
+        use rand::Rng;
 
         rand::rng()
             .sample_iter(&Alphanumeric)
