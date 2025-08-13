@@ -45,7 +45,7 @@ pub enum Error {
     #[error("IO error: {0}")]
     IOError(#[from] std::io::Error),
     /// An error from the `serialport` crate.
-    #[error("Serialport error: {0}")] // Note: Typo in original, should be "Serialport error"
+    #[error("Serialport error: {0}")]
     Serial(#[from] serialport::Error),
 }
 

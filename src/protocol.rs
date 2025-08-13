@@ -1,3 +1,33 @@
+//! # Daly BMS Protocol Implementation
+//!
+//! This module provides the low-level implementation for the Daly BMS (Battery Management System)
+//! communication protocol. It defines the structure of commands and the logic for encoding
+//! requests and decoding responses.
+//!
+//! The module is organized around specific BMS commands, with each command typically represented
+//! by a struct or enum. For example, the `Soc` struct is used for requesting and decoding
+//! the State of Charge, voltage, and current.
+//!
+//! ## Key Features:
+//!
+//! - **Command-specific Structs/Enums**: Each BMS command (e.g., `get_soc`, `get_status`) has a
+//!   corresponding type that encapsulates its request and response logic.
+//! - **Request Generation**: Each command type provides a `request` function that constructs the
+//!   byte frame to be sent to the BMS.
+//! - **Response Decoding**: Each command type provides a `decode` function that parses the
+//!   response byte frame from the BMS into a structured format.
+//! - **Checksum Calculation**: Includes helpers for calculating and validating the checksum
+//!   required by the Daly protocol.
+//! - **Error Handling**: Defines protocol-specific error conditions, such as checksum mismatches
+//!   or invalid response lengths.
+//!
+//! ## For End-Users:
+//!
+//! This module is intended for internal use by the higher-level client implementations
+//! (e.g., `dalybms_lib::serialport` and `dalybms_lib::tokio_serial_async`). Most users should
+//! not need to interact with this module directly. The clients provide a more ergonomic,
+//! high-level API for interacting with the BMS.
+//!
 use crate::Error;
 
 #[cfg(feature = "serde")]
@@ -61,7 +91,20 @@ const START_BYTE: u8 = 0xa5;
 /// The length of the data payload in a standard command.
 const DATA_LENGTH: u8 = 0x08;
 
-/// Creates the header for a request.
+/// Creates the basic structure of a request frame.
+///
+/// This function initializes a 13-byte vector and populates the header
+/// with the start byte, address, command, and data length. The data
+/// payload and checksum are left as zeros and must be populated later.
+///
+/// # Arguments
+///
+/// * `address` - The `Address` to which the command is being sent.
+/// * `command` - The command code (e.g., 0x90 for SOC).
+///
+/// # Returns
+///
+/// A `Vec<u8>` of length `TX_BUFFER_LENGTH` with the header fields set.
 fn create_request_header(address: Address, command: u8) -> Vec<u8> {
     let mut tx_buffer = vec![0; TX_BUFFER_LENGTH];
     tx_buffer[0] = START_BYTE;
@@ -72,7 +115,8 @@ fn create_request_header(address: Address, command: u8) -> Vec<u8> {
 }
 
 /// Calculates the checksum for a given buffer.
-/// The checksum is the sum of all bytes in the buffer, wrapping at 256.
+/// The checksum is the sum of all bytes in the buffer up to, but not including,
+/// the last byte, which is reserved for the checksum itself.
 fn calc_crc(buffer: &[u8]) -> u8 {
     let mut checksum: u8 = 0;
     let slice = &buffer[0..buffer.len() - 1];
@@ -88,13 +132,24 @@ fn calc_crc_and_set(buffer: &mut [u8]) {
     buffer[len - 1] = calc_crc(buffer)
 }
 
+/// A macro to read a specific bit from a byte.
+/// Returns `true` if the bit at `position` is 1, `false` otherwise.
 macro_rules! read_bit {
     ($byte:expr,$position:expr) => {
         ($byte >> $position) & 1 != 0
     };
 }
 
-/// Validates that the buffer length is sufficient.
+/// Validates that the received buffer has at least the expected length.
+///
+/// # Arguments
+///
+/// * `buffer` - The byte slice received from the BMS.
+/// * `expected_size` - The minimum required length for the buffer.
+///
+/// # Returns
+///
+/// An empty `Result` on success, or an `Error::ReplySizeError` if validation fails.
 fn validate_len(buffer: &[u8], expected_size: usize) -> std::result::Result<(), Error> {
     if buffer.len() < expected_size {
         log::warn!(
@@ -107,7 +162,15 @@ fn validate_len(buffer: &[u8], expected_size: usize) -> std::result::Result<(), 
     Ok(())
 }
 
-/// Validates that the buffer checksum is correct.
+/// Validates that the checksum of the received buffer is correct.
+///
+/// # Arguments
+///
+/// * `buffer` - The byte slice received from the BMS.
+///
+/// # Returns
+///
+/// An empty `Result` on success, or an `Error::CheckSumError` if validation fails.
 fn validate_checksum(buffer: &[u8]) -> std::result::Result<(), Error> {
     let checksum = calc_crc(buffer);
     if buffer[buffer.len() - 1] != checksum {
@@ -727,149 +790,149 @@ impl CellBalanceState {
 #[derive(Debug, Clone, thiserror::Error, PartialEq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum ErrorCode {
-    /// Cell voltage too high (Level 1 Alarm).
-    #[error("Cell voltage is too high level one alarm")]
+    /// Cell voltage is too high (Level 1)
+    #[error("Cell voltage is too high (Level 1)")]
     CellVoltHighLevel1,
-    /// Cell voltage too high (Level 2 Alarm).
-    #[error("Cell voltage is too high level two alarm")]
+    /// Cell voltage is too high (Level 2)
+    #[error("Cell voltage is too high (Level 2)")]
     CellVoltHighLevel2,
-    /// Cell voltage too low (Level 1 Alarm).
-    #[error("Cell voltage is too low level one alarm")]
+    /// Cell voltage is too low (Level 1)
+    #[error("Cell voltage is too low (Level 1)")]
     CellVoltLowLevel1,
-    /// Cell voltage too low (Level 2 Alarm).
-    #[error("Cell voltage is too low level two alarm")]
+    /// Cell voltage is too low (Level 2)
+    #[error("Cell voltage is too low (Level 2)")]
     CellVoltLowLevel2,
-    /// Total battery voltage too high (Level 1 Alarm).
-    #[error("Total voltage is too high level one alarm")]
+    /// Total voltage is too high (Level 1)
+    #[error("Total voltage is too high (Level 1)")]
     SumVoltHighLevel1,
-    /// Total battery voltage too high (Level 2 Alarm).
-    #[error("Total voltage is too high level two alarm")]
+    /// Total voltage is too high (Level 2)
+    #[error("Total voltage is too high (Level 2)")]
     SumVoltHighLevel2,
-    /// Total battery voltage too low (Level 1 Alarm).
-    #[error("Total voltage is too low level one alarm")]
+    /// Total voltage is too low (Level 1)
+    #[error("Total voltage is too low (Level 1)")]
     SumVoltLowLevel1,
-    /// Total battery voltage too low (Level 2 Alarm).
-    #[error("Total voltage is too low level two alarm")]
+    /// Total voltage is too low (Level 2)
+    #[error("Total voltage is too low (Level 2)")]
     SumVoltLowLevel2,
-    /// Charging temperature too high (Level 1 Alarm).
-    #[error("Charging temperature too high level one alarm")]
+    /// Charging temperature too high (Level 1)
+    #[error("Charging temperature too high (Level 1)")]
     ChargeTempHighLevel1,
-    /// Charging temperature too high (Level 2 Alarm).
-    #[error("Charging temperature too high level two alarm")]
+    /// Charging temperature too high (Level 2)
+    #[error("Charging temperature too high (Level 2)")]
     ChargeTempHighLevel2,
-    /// Charging temperature too low (Level 1 Alarm).
-    #[error("Charging temperature too low level one alarm")]
+    /// Charging temperature too low (Level 1)
+    #[error("Charging temperature too low (Level 1)")]
     ChargeTempLowLevel1,
-    /// Charging temperature too low (Level 2 Alarm).
-    #[error("Charging temperature too low level two alarm")]
+    /// Charging temperature too low (Level 2)
+    #[error("Charging temperature too low (Level 2)")]
     ChargeTempLowLevel2,
-    /// Discharging temperature too high (Level 1 Alarm).
-    #[error("Discharging temperature too high level one alarm")]
+    /// Discharging temperature too high (Level 1)
+    #[error("Discharging temperature too high (Level 1)")]
     DischargeTempHighLevel1,
-    /// Discharging temperature too high (Level 2 Alarm).
-    #[error("Discharging temperature too high level two alarm")]
+    /// Discharging temperature too high (Level 2)
+    #[error("Discharging temperature too high (Level 2)")]
     DischargeTempHighLevel2,
-    /// Discharging temperature too low (Level 1 Alarm).
-    #[error("Discharging temperature too low level one alarm")]
+    /// Discharging temperature too low (Level 1)
+    #[error("Discharging temperature too low (Level 1)")]
     DischargeTempLowLevel1,
-    /// Discharging temperature too low (Level 2 Alarm).
-    #[error("Discharging temperature too low level two alarm")]
+    /// Discharging temperature too low (Level 2)
+    #[error("Discharging temperature too low (Level 2)")]
     DischargeTempLowLevel2,
-    /// Charge overcurrent (Level 1 Alarm).
-    #[error("Charge over current level one alarm")]
+    /// Charge overcurrent (Level 1)
+    #[error("Charge overcurrent (Level 1)")]
     ChargeOvercurrentLevel1,
-    /// Charge overcurrent (Level 2 Alarm).
-    #[error("Charge over current level two alarm")]
+    /// Charge overcurrent (Level 2)
+    #[error("Charge overcurrent (Level 2)")]
     ChargeOvercurrentLevel2,
-    /// Discharge overcurrent (Level 1 Alarm).
-    #[error("Discharge over current level one alarm")]
+    /// Discharge overcurrent (Level 1)
+    #[error("Discharge overcurrent (Level 1)")]
     DischargeOvercurrentLevel1,
-    /// Discharge overcurrent (Level 2 Alarm).
-    #[error("Discharge over current level two alarm")]
+    /// Discharge overcurrent (Level 2)
+    #[error("Discharge overcurrent (Level 2)")]
     DischargeOvercurrentLevel2,
-    /// State of Charge (SOC) too high (Level 1 Alarm).
-    #[error("SOC is too high level one alarm")]
+    /// State of Charge (SOC) too high (Level 1)
+    #[error("SOC too high (Level 1)")]
     SocHighLevel1,
-    /// State of Charge (SOC) too high (Level 2 Alarm).
-    #[error("SOC is too high level two alarm")]
+    /// State of Charge (SOC) too high (Level 2)
+    #[error("SOC too high (Level 2)")]
     SocHighLevel2,
-    /// State of Charge (SOC) too low (Level 1 Alarm).
-    #[error("SOC is too low level one alarm")]
+    /// State of Charge (SOC) too low (Level 1)
+    #[error("SOC too low (Level 1)")]
     SocLowLevel1,
-    /// State of Charge (SOC) too low (Level 2 Alarm).
-    #[error("SOC is too low level two alarm")]
+    /// State of Charge (SOC) too low (Level 2)
+    #[error("SOC too low (Level 2)")]
     SocLowLevel2,
-    /// Excessive cell voltage difference (Level 1 Alarm).
-    #[error("Excessive differential pressure level one alarm")]
+    /// Excessive voltage difference between cells (Level 1)
+    #[error("Excessive voltage difference between cells (Level 1)")]
     DiffVoltLevel1,
-    /// Excessive cell voltage difference (Level 2 Alarm).
-    #[error("Excessive differential pressure level two alarm")]
+    /// Excessive voltage difference between cells (Level 2)
+    #[error("Excessive voltage difference between cells (Level 2)")]
     DiffVoltLevel2,
-    /// Excessive temperature difference between sensors (Level 1 Alarm).
-    #[error("Excessive temperature difference level one alarm")]
+    /// Excessive temperature difference between sensors (Level 1)
+    #[error("Excessive temperature difference between sensors (Level 1)")]
     DiffTempLevel1,
-    /// Excessive temperature difference between sensors (Level 2 Alarm).
-    #[error("Excessive temperature difference level two alarm")]
+    /// Excessive temperature difference between sensors (Level 2)
+    #[error("Excessive temperature difference between sensors (Level 2)")]
     DiffTempLevel2,
-    /// Charging MOSFET overtemperature alarm.
-    #[error("Charging MOS overtemperature alarm")]
+    /// Charging MOSFET over-temperature alarm.
+    #[error("Charging MOSFET temperature too high")]
     ChargeMosTempHighAlarm,
-    /// Discharging MOSFET overtemperature alarm.
-    #[error("Discharging MOS overtemperature alarm")]
+    /// Discharging MOSFET over-temperature alarm.
+    #[error("Discharging MOSFET temperature too high")]
     DischargeMosTempHighAlarm,
     /// Charging MOSFET temperature sensor failure.
-    #[error("Charging MOS temperature detection sensor failure")]
+    #[error("Charging MOSFET temperature sensor failure")]
     ChargeMosTempSensorErr,
     /// Discharging MOSFET temperature sensor failure.
-    #[error("Disharging MOS temperature detection sensor failure")]
+    #[error("Discharging MOSFET temperature sensor failure")]
     DischargeMosTempSensorErr,
     /// Charging MOSFET adhesion failure (stuck closed).
-    #[error("Charging MOS adhesion failure")]
+    #[error("Charging MOSFET adhesion failure")]
     ChargeMosAdhesionErr,
     /// Discharging MOSFET adhesion failure (stuck closed).
-    #[error("Discharging MOS adhesion failure")]
+    #[error("Discharging MOSFET adhesion failure")]
     DischargeMosAdhesionErr,
     /// Charging MOSFET breaker failure (stuck open).
-    #[error("Charging MOS breaker failure")]
+    #[error("Charging MOSFET open circuit failure")]
     ChargeMosOpenCircuitErr,
     /// Discharging MOSFET breaker failure (stuck open).
-    #[error("Discharging MOS breaker failure")]
+    #[error("Discharging MOSFET open circuit failure")]
     DischargeMosOpenCircuitErr,
     /// AFE (Analog Front End) acquisition chip malfunction.
-    #[error("AFE acquisition chip malfunction")]
+    #[error("AFE acquisition chip failure")]
     AfeCollectChipErr,
     /// Monomer (cell voltage) collection circuit drop off.
-    #[error("monomer collect drop off")]
+    #[error("Cell voltage collection circuit failure")]
     VoltageCollectDropped,
     /// Single temperature sensor failure.
-    #[error("Single temperature sensor failure")]
+    #[error("Cell temperature sensor failure")]
     CellTempSensorErr,
     /// EEPROM storage failure.
-    #[error("EEPROM storage failures")]
+    #[error("EEPROM storage failure")]
     EepromErr,
     /// RTC (Real-Time Clock) malfunction.
-    #[error("RTC clock malfunction")]
+    #[error("RTC clock failure")]
     RtcErr,
-    /// Precharge failure.
-    #[error("Precharge failure")]
+    /// Pre-charge failure.
+    #[error("Pre-charge failure")]
     PrechangeFailure,
     /// General communication malfunction.
-    #[error("Communication malfunction")]
+    #[error("Communication failure")]
     CommunicationFailure,
     /// Internal communication module malfunction.
-    #[error("Internal communication module malfunction")]
+    #[error("Internal communication failure")]
     InternalCommunicationFailure,
     /// Current detection module failure.
-    #[error("Current module failure")]
+    #[error("Current detection module failure")]
     CurrentModuleFault,
     /// Total voltage detection module failure.
-    #[error("Total voltage detection failure")]
+    #[error("Total voltage detection module failure")]
     SumVoltageDetectFault,
     /// Short circuit protection failure.
     #[error("Short circuit protection failure")]
     ShortCircuitProtectFault,
     /// Low voltage condition forbids charging.
-    #[error("Low voltage forbidden charging")]
+    #[error("Low voltage forbids charging")]
     LowVoltForbiddenChargeFault,
 }
 
