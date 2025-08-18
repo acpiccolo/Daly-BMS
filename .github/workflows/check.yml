@@ -19,7 +19,7 @@ jobs:
       checks: write
     steps:
       - name: Checkout source code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
       - name: Check for typos
         uses: crate-ci/typos@v1.35.3
   conventional_commit:
@@ -28,7 +28,7 @@ jobs:
     if: github.event_name != 'pull_request'
     steps:
       - name: Checkout source code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           submodules: true
           # Fetch all commits to generate the changelog
@@ -43,7 +43,7 @@ jobs:
     if: github.event_name == 'pull_request'
     steps:
       - name: Checkout source code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           submodules: true
           # Fetch all commits to generate the changelog
@@ -66,7 +66,7 @@ jobs:
         toolchain: [stable, beta]
     steps:
       - name: Checkout source code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
       - name: Install prerequisites
         shell: bash
         run: |
@@ -85,7 +85,7 @@ jobs:
       checks: write
     steps:
       - name: Checkout source code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
       - name: Install stable rust toolchain
         uses: dtolnay/rust-toolchain@stable
       - name: audit check
@@ -100,7 +100,7 @@ jobs:
       checks: write
     steps:
       - name: Checkout source code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
       - name: Install prerequisites
         shell: bash
         run: |
