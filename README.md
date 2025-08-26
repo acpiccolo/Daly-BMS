@@ -7,13 +7,46 @@
 # Daly BMS
 This RUST project can read and write a Daly BMS module from the command line.
 
-## Compilation
-1. Install Rust e.g. using [these instructions](https://www.rust-lang.org/learn/get-started).
-2. Ensure that you have a C compiler and linker.
-3. Clone `git clone https://github.com/acpiccolo/Daly-BMS.git`
-4. Run `cargo install --path .` to install the binary. Alternatively,
-   check out the repository and run `cargo build --release`. This will compile
-   the binary to `target/release/dalybms`.
+## Table of Contents
+- [Technical Documentation](#technical-documentation)
+- [Installation & Compilation](#installation--compilation)
+- [Getting started](#getting-started)
+- [Command-Line Usage](#command-line-usage)
+- [Daemon Mode](#daemon-mode)
+- [Library Usage](#library-usage)
+- [Cargo Features](#cargo-features)
+- [License](#license)
+
+## Technical Documentation
+For those interested in the low-level communication details, the Daly BMS UART/RS485 communication protocol specification (version 1.2) is available in the repository at `docs/Daly UART_485 Communications Protocol V1.2.pdf`.
+
+## Installation & Compilation
+
+### Prerequisites
+Ensure you have the following dependencies installed before proceeding:
+- **Rust and Cargo**: Install via [rustup](https://rustup.rs/)
+- **Git**: To clone the repository
+- **C compiler and linker**
+
+### **Building from Source**
+1. **Clone the repository**:
+   ```sh
+   git clone https://github.com/acpiccolo/Daly-BMS.git
+   cd Daly-BMS
+   ```
+2. **Compile the project**:
+   ```sh
+   cargo build --release
+   ```
+   The compiled binary will be available at:
+   ```sh
+   target/release/dalybms
+   ```
+3. **(Optional) Install the binary system-wide**:
+   ```sh
+   cargo install --path .
+   ```
+   This installs `dalybms` to `$HOME/.cargo/bin`, making it accessible from anywhere.
 
 ## Getting started
 
@@ -31,7 +64,7 @@ To get help for a specific subcommand, for example `set-soc`:
 dalybms set-soc --help
 ```
 
-### CLI Examples
+## Command-Line Usage
 
 Here are some examples of how to use the `dalybms` tool. Replace `/dev/ttyUSB0` with the actual serial port your BMS is connected to, if different.
 
@@ -262,9 +295,6 @@ dalybms_lib = { version = "x.y.z", features = ["serialport"] }
 
 # For the asynchronous client:
 # dalybms_lib = { version = "x.y.z", features = ["tokio-serial-async"] }
-
-# For both clients:
-# dalybms_lib = { version = "x.y.z", features = ["serialport", "tokio-serial-async"] }
 ```
 
 You need to specify which client(s) you intend to use via feature flags:
@@ -343,26 +373,19 @@ async fn main() {
 }
 ```
 
-### Cargo Features
+## Cargo Features
 
-This crate (`dalybms_lib`) uses feature flags to manage optional dependencies and client implementations. This allows users to compile only the parts they need.
+This crate (`dalybms_lib`) uses a feature-based system to manage optional dependencies and client implementations. This allows users to compile only the parts they need.
 
-| Feature              | Purpose                                                                 | Client Enabled     | Default |
-| :------------------- | :---------------------------------------------------------------------- | :----------------- | :-----: |
-| `serialport`         | Enables the **synchronous** client using the `serialport` crate.        | Synchronous        | No      |
-| `tokio-serial-async` | Enables the **asynchronous** client using `tokio` and `tokio-serial`. | Asynchronous       | No      |
-| `serde`              | Enables `serde` support for serializing/deserializing data structures.  | Both (if enabled)  | No      |
-| `bin-dependencies`   | Enables all features required by the `dalybms` binary executable.       | `serialport`       | Yes (for `dalybms` binary target) |
+- **`default`**: Enables `bin-dependencies`, which is intended for compiling the `dalybms` command-line tool.
 
-**Notes on Features:**
-- When using `dalybms_lib` as a library, you should explicitly enable `serialport` and/or `tokio-serial-async` depending on your needs.
-- The `serde` feature can be combined with either client feature if you need serialization capabilities (e.g., `features = ["serialport", "serde"]`).
-- The `default` feature for the `dalybms` *crate as a whole* is `bin-dependencies`. However, for `dalybms_lib` when used as a dependency, no client features are enabled by default.
-- The `bin-dependencies` feature enables `serialport` because the `dalybms` command-line tool currently uses the synchronous client.
+### Client Features
+- **`serialport`**: Enables the **synchronous** client using the `serialport` crate.
+- **`tokio-serial-async`**: Enables the **asynchronous** client using `tokio` and `tokio-serial`.
 
-## Protocol Details
-
-For those interested in the low-level communication details, the Daly BMS UART/RS485 communication protocol specification (version 1.2) is available in the repository at `docs/Daly UART_485 Communications Protocol V1.2.pdf`.
+### Utility Features
+- **`serde`**: Enables `serde` support for serializing/deserializing data structures.
+- **`bin-dependencies`**: Enables all features required by the `dalybms` binary executable (currently `serialport`).
 
 ## License
 Licensed under either of
