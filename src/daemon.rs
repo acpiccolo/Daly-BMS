@@ -216,14 +216,15 @@ pub fn run(
                 for &dep in metric.dependencies {
                     if !fetched_data.contains_key(dep)
                         && metrics_to_process.contains(&dep.to_string())
-                        && let Some(dep_metric) = available_metrics.get(dep)
                     {
-                        info!("Fetching dependency '{dep}' for '{metric_name}'");
-                        match (dep_metric.fetch)(&mut bms) {
-                            Ok(data) => {
-                                fetched_data.insert(dep.to_string(), data);
+                        if let Some(dep_metric) = available_metrics.get(dep) {
+                            info!("Fetching dependency '{dep}' for '{metric_name}'");
+                            match (dep_metric.fetch)(&mut bms) {
+                                Ok(data) => {
+                                    fetched_data.insert(dep.to_string(), data);
+                                }
+                                Err(e) => error!("Error fetching dependency '{dep}': {e}"),
                             }
-                            Err(e) => error!("Error fetching dependency '{dep}': {e}"),
                         }
                     }
                 }
