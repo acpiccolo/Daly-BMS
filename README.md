@@ -212,9 +212,9 @@ dalybms daemon [OPTIONS]
 *   `--interval <DURATION>`: Sets how often to fetch and report data. This is a duration string like "10s", "1m", "2h30m".
     *   Default: "10s" (10 seconds).
 *   `--metrics <METRICS>`: A comma-separated list of specific metrics to collect.
-    *   Available metrics: `status`, `soc`, `voltages` (individual cell voltages), `temperatures` (individual sensor readings), `all`.
+    *   Available metrics: `status`, `soc`, `mosfet`, `voltage-range`, `temperature-range`, `cell-voltages`, `cell-temperatures`, `balancing`, `errors`, `all`.
     *   If `all` is included, all available metrics will be fetched.
-    *   Default: "soc,status" (Note: The current implementation of daemon mode primarily supports `status`, `soc`, `voltages`, `temperatures`, and `all`. Other metrics specified in a custom list might only be logged as "Fetching metric: <name>" without specific data parsing in the output yet).
+    *   Default: "soc,status".
 
 ### Daemon Mode Examples
 
