@@ -66,3 +66,7 @@ ignored = ["clap-num", "humantime-serde"]
 
 [dev-dependencies]
 tempfile = "3"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
