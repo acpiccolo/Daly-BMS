@@ -385,7 +385,7 @@ This crate (`dalybms_lib`) uses a feature-based system to manage optional depend
 
 ### Utility Features
 - **`serde`**: Enables `serde` support for serializing/deserializing data structures.
-- **`bin-dependencies`**: Enables all features required by the `dalybms` binary executable (currently `serialport`).
+- **`bin-dependencies`**: Enables all features required by the `dalybms` binary executable (currently `serialport` and `serde`).
 
 ## License
 Licensed under either of

@@ -6,10 +6,18 @@
 //!
 //! ## Features
 //!
-//! - `serialport`: Enables the synchronous client using the `serialport` crate.
-//! - `tokio-serial-async`: Enables the asynchronous client using the `tokio-serial` crate.
+//! This crate uses a feature-based system to keep dependencies minimal.
+//! You need to enable the client you want to use.
 //!
-//! By default, both features are enabled.
+//! - `default`: Enables `bin-dependencies`, which is intended for compiling the `dalybms` command-line tool and pulls in `serialport` and `serde`.
+//!
+//! ### Client Features
+//! - `serialport`: Enables the **synchronous** client using the `serialport` crate.
+//! - `tokio-serial-async`: Enables the **asynchronous** client using `tokio` and `tokio-serial`.
+//!
+//! ### Utility Features
+//! - `serde`: Enables `serde` support for serializing/deserializing data structures.
+//! - `bin-dependencies`: Enables all features required by the `dalybms` binary executable (currently `serialport` and `serde`).
 
 /// Contains error types for the library.
 mod error;
