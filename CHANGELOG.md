@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.6](https://github.com/acpiccolo/Daly-BMS/compare/v0.1.5...v0.1.6) - 2025-09-01
+
+### Other
+
+- *(deps)* bump crate-ci/typos from 1.35.5 to 1.35.7
+- improve features description in lib.rs
+- Enable doc_cfg feature for docs.rs builds
+
 ## [0.1.5](https://github.com/acpiccolo/Daly-BMS/compare/v0.1.4...v0.1.5) - 2025-08-27
 
 ### Other
