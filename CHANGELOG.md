@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.6](https://github.com/acpiccolo/Daly-BMS/compare/v0.1.5...v0.1.6) - 2025-10-20
+
+### Other
+
+- upgrade cocogitto-action to version 4
+- *(deps)* bump crate-ci/typos from 1.37.2 to 1.38.1
+- *(deps)* bump crate-ci/typos from 1.36.3 to 1.37.2
+- *(deps)* bump crate-ci/typos from 1.36.2 to 1.36.3
+- *(deps)* bump crate-ci/typos from 1.35.7 to 1.36.2
+- *(deps)* bump crate-ci/typos from 1.35.5 to 1.35.7
+- improve features description in lib.rs
+- Enable doc_cfg feature for docs.rs builds
+
 ## [0.1.5](https://github.com/acpiccolo/Daly-BMS/compare/v0.1.4...v0.1.5) - 2025-08-27
 
 ### Other
