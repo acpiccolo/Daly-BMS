@@ -34,9 +34,9 @@ jobs:
           # Fetch all commits to generate the changelog
           fetch-depth: 0
       - name: Conventional commit check
-        uses: cocogitto/cocogitto-action@main
+        uses: cocogitto/cocogitto-action@v4
         with:
-          check: true
+          command: check
   conventional_commit_pr:
     name: PR conventional commit check
     runs-on: ubuntu-latest
@@ -51,9 +51,9 @@ jobs:
           # pick the pr HEAD instead of the merge commit
           ref: ${{ github.event.pull_request.head.sha }}
       - name: Conventional commit check
-        uses: cocogitto/cocogitto-action@main
+        uses: cocogitto/cocogitto-action@v4
         with:
-          check: true
+          command: check
   clippy:
     name: ${{ matrix.toolchain }} / clippy
     runs-on: ubuntu-latest
