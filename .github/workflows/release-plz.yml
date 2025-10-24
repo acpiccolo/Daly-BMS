@@ -24,8 +24,9 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
       - name: Setup dependencies
-        shell: bash {0}
-        run: sudo apt-get install -y libudev-dev
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libudev-dev
       - name: Run release-plz
         uses: MarcoIeni/release-plz-action@v0.5
         with:
@@ -52,8 +53,9 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
       - name: Setup dependencies
-        shell: bash {0}
-        run: sudo apt-get install -y libudev-dev
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libudev-dev
       - name: Run release-plz
         uses: MarcoIeni/release-plz-action@v0.5
         with:
