@@ -21,7 +21,7 @@ jobs:
       - name: Checkout source code
         uses: actions/checkout@v6
       - name: Check for typos
-        uses: crate-ci/typos@v1.40.0
+        uses: crate-ci/typos@v1.41.0
   conventional_commit:
     name: conventional commit check
     runs-on: ubuntu-latest
