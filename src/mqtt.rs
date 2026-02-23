@@ -46,14 +46,9 @@ impl MqttConfig {
     }
 
     fn generate_random_string(len: usize) -> String {
-        use rand::distr::Alphanumeric;
-        use rand::Rng;
+        use rand::distr::{Alphanumeric, SampleString};
 
-        rand::rng()
-            .sample_iter(&Alphanumeric)
-            .take(len)
-            .map(char::from)
-            .collect()
+        Alphanumeric.sample_string(&mut rand::rng(), len)
     }
 
     fn default_client_id() -> String {
