@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.8](https://github.com/acpiccolo/Daly-BMS/compare/v0.1.7...v0.1.8) - 2026-06-08
+
+### Other
+
+- *(deps)* bump crate-ci/typos from 1.47.0 to 1.47.2
+- *(deps)* bump crate-ci/typos from 1.46.3 to 1.47.0
+- *(deps)* bump crate-ci/typos from 1.46.2 to 1.46.3
+- *(deps)* bump crate-ci/typos from 1.46.1 to 1.46.2
+- *(deps)* bump crate-ci/typos from 1.46.0 to 1.46.1
+- *(deps)* bump crate-ci/typos from 1.45.1 to 1.46.0
+
 ## [0.1.7](https://github.com/acpiccolo/Daly-BMS/compare/v0.1.6...v0.1.7) - 2026-04-20
 
 ### Other
