@@ -164,9 +164,9 @@ Here are some examples of how to use the `dalybms` tool. Replace `/dev/ttyUSB0` 
     dalybms --device /dev/ttyACM0 status
     ```
 
-*   Change the communication timeout (e.g., to 1 second):
+*   Change the communication timeout (default 1 second, e.g., to 2 seconds):
     ```bash
-    dalybms --timeout 1s soc
+    dalybms --timeout 2s soc
     ```
 
 *   Change the delay between commands (e.g., to 100 milliseconds):
