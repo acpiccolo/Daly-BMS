@@ -12,4 +12,8 @@ pub enum Error {
     /// Error indicating that a frame was received out of order.
     #[error("Frame out of order")]
     FrameNoError,
+
+    /// Error indicating that a reply frame does not answer the sent command.
+    #[error("Unexpected reply frame")]
+    UnexpectedFrame,
 }

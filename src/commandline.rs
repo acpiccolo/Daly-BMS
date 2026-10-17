@@ -104,8 +104,9 @@ pub struct CliArgs {
     #[command(subcommand)]
     pub command: CliCommands,
 
-    /// Timeout for serial I/O operations (e.g., "100ms", "1s", "2s 500ms")
-    #[arg(value_parser = humantime::parse_duration, long, default_value = "100ms")]
+    // Some BMS (e.g. the Daly active balancer) start replying to a cell voltages request only after ~300ms
+    /// Timeout for serial I/O operations (e.g., "500ms", "1s", "2s 500ms")
+    #[arg(value_parser = humantime::parse_duration, long, default_value = "1s")]
     pub timeout: Duration,
 
     // Some USB - RS485 dongles requires at least 10ms to switch between TX and RX, so use a save delay between frames
