@@ -228,22 +228,28 @@ impl DalyBMS {
         Ok(())
     }
 
-    /// Private async helper to receive a specified number of bytes from the serial port with timeouts.
-    async fn receive_bytes(&mut self, size: usize) -> Result<Vec<u8>> {
-        let mut rx_buffer = vec![0; size];
+    /// Private async helper to receive the reply frames of a request from the serial port with timeouts.
+    /// Bytes not belonging to the reply (e.g. a late reply to an earlier request) are skipped.
+    async fn receive_frames(&mut self, tx_buffer: &[u8], reply_size: usize) -> Result<Vec<u8>> {
+        let mut reader = FrameReader::new(tx_buffer, reply_size);
+        while !reader.is_complete() {
+            let mut rx_buffer = vec![0; reader.missing()];
 
-        log::trace!("read {size} bytes");
-        tokio::time::timeout(self.io_timeout, self.serial.read_exact(&mut rx_buffer)).await??;
+            log::trace!("read {} bytes", rx_buffer.len());
+            tokio::time::timeout(self.io_timeout, self.serial.read_exact(&mut rx_buffer)).await??;
+
+            log::trace!("receive_bytes: {rx_buffer:02X?}");
+            reader.push(&rx_buffer)?;
+        }
 
         self.last_execution = Instant::now(); // Update last execution time
 
-        log::trace!("receive_bytes: {rx_buffer:02X?}");
-        Ok(rx_buffer)
+        Ok(reader.into_bytes())
     }
 
     async fn send_and_receive(&mut self, tx_buffer: &[u8], reply_size: usize) -> Result<Vec<u8>> {
         self.send_bytes(tx_buffer).await?;
-        self.receive_bytes(reply_size).await
+        self.receive_frames(tx_buffer, reply_size).await
     }
 
     /// Sets the timeout for individual I/O operations (read/write) on the serial port.
