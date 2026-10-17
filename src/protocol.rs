@@ -185,6 +185,148 @@ fn validate_checksum(buffer: &[u8]) -> std::result::Result<(), Error> {
     Ok(())
 }
 
+/// Validates that the received frame starts with the start byte and answers the given command.
+///
+/// # Arguments
+///
+/// * `buffer` - The byte slice received from the BMS.
+/// * `command` - The command code of the request.
+///
+/// # Returns
+///
+/// An empty `Result` on success, or an `Error::UnexpectedFrame` if validation fails.
+fn validate_frame_header(buffer: &[u8], command: u8) -> std::result::Result<(), Error> {
+    if buffer[0] != START_BYTE || buffer[2] != command {
+        log::warn!(
+            "Unexpected frame - expected command={:02X?} buffer={:02X?}",
+            command,
+            &buffer[..RX_BUFFER_LENGTH.min(buffer.len())]
+        );
+        return Err(Error::UnexpectedFrame);
+    }
+    Ok(())
+}
+
+/// Maximum number of bytes discarded while waiting for the reply frames of a request.
+const MAX_DISCARDED_BYTES: usize = 512;
+
+/// Reassembles the reply frames of a request from the raw serial byte stream.
+///
+/// Some BMS (e.g. the Daly active balancer) reply slowly, so a late reply to an earlier,
+/// timed-out request can still be on the wire when the next request is sent. Instead of
+/// slicing the stream into fixed-size chunks, the reader resynchronizes on the start byte,
+/// and only keeps frames with a valid checksum that answer the requested command. For
+/// multi-frame replies, frames must arrive numbered 1, 2, 3, ...; a frame numbered 1
+/// restarts the collection.
+///
+/// This is a low-level type used by the client implementations.
+#[derive(Debug)]
+pub struct FrameReader {
+    command: u8,
+    n_frames: usize,
+    pending: Vec<u8>,
+    frames: Vec<u8>,
+    discarded: usize,
+}
+
+impl FrameReader {
+    /// Creates a reader for the reply to `request`, which is `reply_size` bytes long.
+    pub fn new(request: &[u8], reply_size: usize) -> Self {
+        Self {
+            command: request[2],
+            n_frames: reply_size.div_ceil(RX_BUFFER_LENGTH),
+            pending: Vec::with_capacity(RX_BUFFER_LENGTH),
+            frames: Vec::with_capacity(reply_size),
+            discarded: 0,
+        }
+    }
+
+    /// Returns `true` once all reply frames have been received.
+    pub fn is_complete(&self) -> bool {
+        self.frames.len() >= self.n_frames * RX_BUFFER_LENGTH
+    }
+
+    /// Number of bytes to read before the next frame can be completed, 0 once complete.
+    pub fn missing(&self) -> usize {
+        if self.is_complete() {
+            0
+        } else {
+            RX_BUFFER_LENGTH - self.pending.len()
+        }
+    }
+
+    /// Feeds received bytes into the reader.
+    ///
+    /// # Returns
+    ///
+    /// An `Error::UnexpectedFrame` if too many bytes had to be discarded without
+    /// receiving the expected frames.
+    pub fn push(&mut self, data: &[u8]) -> std::result::Result<(), Error> {
+        self.pending.extend_from_slice(data);
+        while !self.is_complete() {
+            // Skip everything before the next potential frame start
+            let skip = self
+                .pending
+                .iter()
+                .position(|b| *b == START_BYTE)
+                .unwrap_or(self.pending.len());
+            self.discard(skip);
+            if self.pending.len() < RX_BUFFER_LENGTH {
+                break;
+            }
+
+            let frame = &self.pending[..RX_BUFFER_LENGTH];
+            if frame[RX_BUFFER_LENGTH - 1] != calc_crc(frame) {
+                // The start byte was part of the payload, resync on the next one
+                self.discard(1);
+                continue;
+            }
+            if frame[2] != self.command {
+                log::warn!(
+                    "Discard frame of command={:02X?}, expected command={:02X?}",
+                    frame[2],
+                    self.command
+                );
+                self.discard(RX_BUFFER_LENGTH);
+                continue;
+            }
+            if self.n_frames > 1 {
+                let frame_no = usize::from(frame[4]);
+                if frame_no == 1 {
+                    self.frames.clear();
+                }
+                let expected = self.frames.len() / RX_BUFFER_LENGTH + 1;
+                if frame_no != expected {
+                    log::warn!(
+                        "Discard frame out of order - expected={expected} received={frame_no}"
+                    );
+                    self.discard(RX_BUFFER_LENGTH);
+                    continue;
+                }
+            }
+            self.frames.extend(self.pending.drain(..RX_BUFFER_LENGTH));
+        }
+        if self.discarded > MAX_DISCARDED_BYTES {
+            log::warn!("Discarded {} bytes without a valid reply", self.discarded);
+            return Err(Error::UnexpectedFrame);
+        }
+        Ok(())
+    }
+
+    /// Returns the received reply frames, concatenated.
+    pub fn into_bytes(self) -> Vec<u8> {
+        self.frames
+    }
+
+    fn discard(&mut self, n: usize) {
+        if n > 0 {
+            log::trace!("discard bytes: {:02X?}", &self.pending[..n]);
+            self.pending.drain(..n);
+            self.discarded += n;
+        }
+    }
+}
+
 /// Represents the State of Charge (SOC) and related battery metrics.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
@@ -202,6 +344,9 @@ pub struct Soc {
 }
 
 impl Soc {
+    /// Command code of this request, echoed in the reply frames.
+    const COMMAND: u8 = 0x90;
+
     /// Creates a request frame to read the SOC from the BMS.
     ///
     /// # Arguments
@@ -214,7 +359,7 @@ impl Soc {
     ///
     /// This is a low-level function. Users might prefer client methods like `DalyBMSSerial::get_soc`.
     pub fn request(address: Address) -> Vec<u8> {
-        let mut tx_buffer = create_request_header(address, 0x90);
+        let mut tx_buffer = create_request_header(address, Self::COMMAND);
         calc_crc_and_set(&mut tx_buffer);
         tx_buffer
     }
@@ -237,6 +382,7 @@ impl Soc {
     /// This is a low-level function. Users might prefer client methods.
     pub fn decode(rx_buffer: &[u8]) -> std::result::Result<Self, Error> {
         validate_len(rx_buffer, Self::reply_size())?;
+        validate_frame_header(rx_buffer, Self::COMMAND)?;
         validate_checksum(rx_buffer)?;
         Ok(Self {
             total_voltage: u16::from_be_bytes([rx_buffer[4], rx_buffer[5]]) as f32 / 10.0,
@@ -265,6 +411,9 @@ pub struct CellVoltageRange {
 }
 
 impl CellVoltageRange {
+    /// Command code of this request, echoed in the reply frames.
+    const COMMAND: u8 = 0x91;
+
     /// Creates a request frame to read the cell voltage range from the BMS.
     ///
     /// # Arguments
@@ -277,7 +426,7 @@ impl CellVoltageRange {
     ///
     /// This is a low-level function. Users might prefer client methods.
     pub fn request(address: Address) -> Vec<u8> {
-        let mut tx_buffer = create_request_header(address, 0x91);
+        let mut tx_buffer = create_request_header(address, Self::COMMAND);
         calc_crc_and_set(&mut tx_buffer);
         tx_buffer
     }
@@ -300,6 +449,7 @@ impl CellVoltageRange {
     /// This is a low-level function. Users might prefer client methods.
     pub fn decode(rx_buffer: &[u8]) -> std::result::Result<Self, Error> {
         validate_len(rx_buffer, Self::reply_size())?;
+        validate_frame_header(rx_buffer, Self::COMMAND)?;
         validate_checksum(rx_buffer)?;
         Ok(Self {
             highest_voltage: u16::from_be_bytes([rx_buffer[4], rx_buffer[5]]) as f32 / 1000.0,
@@ -325,6 +475,9 @@ pub struct TemperatureRange {
 }
 
 impl TemperatureRange {
+    /// Command code of this request, echoed in the reply frames.
+    const COMMAND: u8 = 0x92;
+
     /// Creates a request frame to read the temperature range from the BMS.
     ///
     /// # Arguments
@@ -337,7 +490,7 @@ impl TemperatureRange {
     ///
     /// This is a low-level function. Users might prefer client methods.
     pub fn request(address: Address) -> Vec<u8> {
-        let mut tx_buffer = create_request_header(address, 0x92);
+        let mut tx_buffer = create_request_header(address, Self::COMMAND);
         calc_crc_and_set(&mut tx_buffer);
         tx_buffer
     }
@@ -360,6 +513,7 @@ impl TemperatureRange {
     /// This is a low-level function. Users might prefer client methods.
     pub fn decode(rx_buffer: &[u8]) -> std::result::Result<Self, Error> {
         validate_len(rx_buffer, Self::reply_size())?;
+        validate_frame_header(rx_buffer, Self::COMMAND)?;
         validate_checksum(rx_buffer)?;
         // An offset of 40 is added by the BMS to avoid having to deal with negative numbers, see protocol in /docs/
         Ok(Self {
@@ -401,6 +555,9 @@ pub struct MosfetStatus {
 }
 
 impl MosfetStatus {
+    /// Command code of this request, echoed in the reply frames.
+    const COMMAND: u8 = 0x93;
+
     /// Creates a request frame to read the MOSFET status from the BMS.
     ///
     /// # Arguments
@@ -413,7 +570,7 @@ impl MosfetStatus {
     ///
     /// This is a low-level function. Users might prefer client methods.
     pub fn request(address: Address) -> Vec<u8> {
-        let mut tx_buffer = create_request_header(address, 0x93);
+        let mut tx_buffer = create_request_header(address, Self::COMMAND);
         calc_crc_and_set(&mut tx_buffer);
         tx_buffer
     }
@@ -436,6 +593,7 @@ impl MosfetStatus {
     /// This is a low-level function. Users might prefer client methods.
     pub fn decode(rx_buffer: &[u8]) -> std::result::Result<Self, Error> {
         validate_len(rx_buffer, Self::reply_size())?;
+        validate_frame_header(rx_buffer, Self::COMMAND)?;
         validate_checksum(rx_buffer)?;
         let mode = match rx_buffer[4] {
             0 => MosfetMode::Stationary,
@@ -500,6 +658,9 @@ pub struct Status {
 }
 
 impl Status {
+    /// Command code of this request, echoed in the reply frames.
+    const COMMAND: u8 = 0x94;
+
     /// Creates a request frame to read the BMS status from the BMS.
     ///
     /// # Arguments
@@ -512,7 +673,7 @@ impl Status {
     ///
     /// This is a low-level function. Users might prefer client methods.
     pub fn request(address: Address) -> Vec<u8> {
-        let mut tx_buffer = create_request_header(address, 0x94);
+        let mut tx_buffer = create_request_header(address, Self::COMMAND);
         calc_crc_and_set(&mut tx_buffer);
         tx_buffer
     }
@@ -535,6 +696,7 @@ impl Status {
     /// This is a low-level function. Users might prefer client methods.
     pub fn decode(rx_buffer: &[u8]) -> std::result::Result<Self, Error> {
         validate_len(rx_buffer, Self::reply_size())?;
+        validate_frame_header(rx_buffer, Self::COMMAND)?;
         validate_checksum(rx_buffer)?;
         Ok(Self {
             cells: rx_buffer[4],
@@ -565,6 +727,9 @@ pub struct CellVoltages(
 );
 
 impl CellVoltages {
+    /// Command code of this request, echoed in the reply frames.
+    const COMMAND: u8 = 0x95;
+
     /// Creates a request frame to read individual cell voltages from the BMS.
     ///
     /// # Arguments
@@ -577,7 +742,7 @@ impl CellVoltages {
     ///
     /// This is a low-level function. Users might prefer client methods.
     pub fn request(address: Address) -> Vec<u8> {
-        let mut tx_buffer = create_request_header(address, 0x95);
+        let mut tx_buffer = create_request_header(address, Self::COMMAND);
         calc_crc_and_set(&mut tx_buffer);
         tx_buffer
     }
@@ -624,6 +789,7 @@ impl CellVoltages {
                 );
                 return Err(Error::FrameNoError);
             }
+            validate_frame_header(part, Self::COMMAND)?;
             validate_checksum(part)?;
             for i in 0..3 {
                 let volt = u16::from_be_bytes([part[5 + i + i], part[6 + i + i]]) as f32 / 1000.0;
@@ -652,6 +818,9 @@ impl std::ops::Deref for CellVoltages {
 pub struct CellTemperatures;
 
 impl CellTemperatures {
+    /// Command code of this request, echoed in the reply frames.
+    const COMMAND: u8 = 0x96;
+
     /// Creates a request frame to read individual cell temperatures from the BMS.
     ///
     /// # Arguments
@@ -664,7 +833,7 @@ impl CellTemperatures {
     ///
     /// This is a low-level function. Users might prefer client methods.
     pub fn request(address: Address) -> Vec<u8> {
-        let mut tx_buffer = create_request_header(address, 0x96);
+        let mut tx_buffer = create_request_header(address, Self::COMMAND);
         calc_crc_and_set(&mut tx_buffer);
         tx_buffer
     }
@@ -712,6 +881,7 @@ impl CellTemperatures {
                 );
                 return Err(Error::FrameNoError);
             }
+            validate_frame_header(part, Self::COMMAND)?;
             validate_checksum(part)?;
             for i in 0..7 {
                 let temperature = part[5 + i] as i32 - 40;
@@ -731,6 +901,9 @@ impl CellTemperatures {
 pub struct CellBalanceState;
 
 impl CellBalanceState {
+    /// Command code of this request, echoed in the reply frames.
+    const COMMAND: u8 = 0x97;
+
     /// Creates a request frame to read the cell balance states from the BMS.
     ///
     /// # Arguments
@@ -743,7 +916,7 @@ impl CellBalanceState {
     ///
     /// This is a low-level function. Users might prefer client methods.
     pub fn request(address: Address) -> Vec<u8> {
-        let mut tx_buffer = create_request_header(address, 0x97);
+        let mut tx_buffer = create_request_header(address, Self::COMMAND);
         calc_crc_and_set(&mut tx_buffer);
         tx_buffer
     }
@@ -768,6 +941,7 @@ impl CellBalanceState {
     /// This is a low-level function. Users might prefer client methods.
     pub fn decode(rx_buffer: &[u8], n_cells: u8) -> std::result::Result<Vec<bool>, Error> {
         validate_len(rx_buffer, Self::reply_size())?;
+        validate_frame_header(rx_buffer, Self::COMMAND)?;
         validate_checksum(rx_buffer)?;
         let mut result = Vec::with_capacity(n_cells as usize);
         let mut n_cell = 0;
@@ -937,6 +1111,9 @@ pub enum ErrorCode {
 }
 
 impl ErrorCode {
+    /// Command code of this request, echoed in the reply frames.
+    const COMMAND: u8 = 0x98;
+
     /// Creates a request frame to read the BMS error codes.
     ///
     /// # Arguments
@@ -949,7 +1126,7 @@ impl ErrorCode {
     ///
     /// This is a low-level function. Users might prefer client methods.
     pub fn request(address: Address) -> Vec<u8> {
-        let mut tx_buffer = create_request_header(address, 0x98);
+        let mut tx_buffer = create_request_header(address, Self::COMMAND);
         calc_crc_and_set(&mut tx_buffer);
         tx_buffer
     }
@@ -974,6 +1151,7 @@ impl ErrorCode {
     /// This is a low-level function. Users might prefer client methods.
     pub fn decode(rx_buffer: &[u8]) -> std::result::Result<Vec<Self>, Error> {
         validate_len(rx_buffer, Self::reply_size())?;
+        validate_frame_header(rx_buffer, Self::COMMAND)?;
         validate_checksum(rx_buffer)?;
         let mut result = Vec::new();
 
@@ -1048,6 +1226,9 @@ impl ErrorCode {
 pub struct SetDischargeMosfet;
 
 impl SetDischargeMosfet {
+    /// Command code of this request, echoed in the reply frames.
+    const COMMAND: u8 = 0xD9;
+
     /// Creates a request frame to set the state of the discharging MOSFET.
     ///
     /// # Arguments
@@ -1061,7 +1242,7 @@ impl SetDischargeMosfet {
     ///
     /// This is a low-level function. Users might prefer client methods.
     pub fn request(address: Address, enable: bool) -> Vec<u8> {
-        let mut tx_buffer = create_request_header(address, 0xD9);
+        let mut tx_buffer = create_request_header(address, Self::COMMAND);
         if enable {
             tx_buffer[4] = 0x01;
         }
@@ -1089,6 +1270,7 @@ impl SetDischargeMosfet {
     /// This is a low-level function. Users might prefer client methods.
     pub fn decode(rx_buffer: &[u8]) -> std::result::Result<(), Error> {
         validate_len(rx_buffer, Self::reply_size())?;
+        validate_frame_header(rx_buffer, Self::COMMAND)?;
         validate_checksum(rx_buffer)
     }
 }
@@ -1097,6 +1279,9 @@ impl SetDischargeMosfet {
 pub struct SetChargeMosfet;
 
 impl SetChargeMosfet {
+    /// Command code of this request, echoed in the reply frames.
+    const COMMAND: u8 = 0xDA;
+
     /// Creates a request frame to set the state of the charging MOSFET.
     ///
     /// # Arguments
@@ -1110,7 +1295,7 @@ impl SetChargeMosfet {
     ///
     /// This is a low-level function. Users might prefer client methods.
     pub fn request(address: Address, enable: bool) -> Vec<u8> {
-        let mut tx_buffer = create_request_header(address, 0xDA);
+        let mut tx_buffer = create_request_header(address, Self::COMMAND);
         if enable {
             tx_buffer[4] = 0x01;
         }
@@ -1137,6 +1322,7 @@ impl SetChargeMosfet {
     /// This is a low-level function. Users might prefer client methods.
     pub fn decode(rx_buffer: &[u8]) -> std::result::Result<(), Error> {
         validate_len(rx_buffer, Self::reply_size())?;
+        validate_frame_header(rx_buffer, Self::COMMAND)?;
         validate_checksum(rx_buffer)
     }
 }
@@ -1145,6 +1331,9 @@ impl SetChargeMosfet {
 pub struct SetSoc;
 
 impl SetSoc {
+    /// Command code of this request, echoed in the reply frames.
+    const COMMAND: u8 = 0x21;
+
     /// Creates a request frame to set the SOC percentage on the BMS.
     ///
     /// # Arguments
@@ -1158,7 +1347,7 @@ impl SetSoc {
     ///
     /// This is a low-level function. Users might prefer client methods.
     pub fn request(address: Address, soc_percent: f32) -> Vec<u8> {
-        let mut tx_buffer = create_request_header(address, 0x21);
+        let mut tx_buffer = create_request_header(address, Self::COMMAND);
         let value = {
             let val = (soc_percent * 10.0).round();
             if val > 1000.0 {
@@ -1196,6 +1385,7 @@ impl SetSoc {
     /// This is a low-level function. Users might prefer client methods.
     pub fn decode(rx_buffer: &[u8]) -> std::result::Result<(), Error> {
         validate_len(rx_buffer, Self::reply_size())?;
+        validate_frame_header(rx_buffer, Self::COMMAND)?;
         validate_checksum(rx_buffer)
     }
 }
@@ -1204,6 +1394,9 @@ impl SetSoc {
 pub struct BmsReset;
 
 impl BmsReset {
+    /// Command code of this request, echoed in the reply frames.
+    const COMMAND: u8 = 0x00;
+
     /// Creates a request frame to reset the BMS.
     ///
     /// # Arguments
@@ -1216,7 +1409,7 @@ impl BmsReset {
     ///
     /// This is a low-level function. Users might prefer client methods.
     pub fn request(address: Address) -> Vec<u8> {
-        let mut tx_buffer = create_request_header(address, 0x00);
+        let mut tx_buffer = create_request_header(address, Self::COMMAND);
         calc_crc_and_set(&mut tx_buffer);
         tx_buffer
     }
@@ -1240,6 +1433,7 @@ impl BmsReset {
     /// This is a low-level function. Users might prefer client methods.
     pub fn decode(rx_buffer: &[u8]) -> std::result::Result<(), Error> {
         validate_len(rx_buffer, Self::reply_size())?;
+        validate_frame_header(rx_buffer, Self::COMMAND)?;
         validate_checksum(rx_buffer)
     }
 }
@@ -1872,5 +2066,96 @@ mod tests {
             0xA5, 0x40, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xED,
         ];
         assert_eq!(BmsReset::request(Address::Host), expected_frame);
+    }
+
+    // Reply frames captured from a Daly active balancer
+    const STATUS_FRAME: [u8; 13] = [
+        0xA5, 0x01, 0x94, 0x08, 0x14, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x49, 0xA0,
+    ];
+    const VOLTAGES_FRAME_1: [u8; 13] = [
+        0xA5, 0x01, 0x95, 0x08, 0x01, 0x0D, 0xD8, 0x0D, 0xD8, 0x0D, 0xD7, 0x49, 0x3B,
+    ];
+    const VOLTAGES_FRAME_2: [u8; 13] = [
+        0xA5, 0x01, 0x95, 0x08, 0x02, 0x0D, 0xD9, 0x0D, 0xD9, 0x0D, 0xD8, 0x49, 0x3F,
+    ];
+
+    fn read_frames(request: &[u8], reply_size: usize, stream: &[u8]) -> Option<Vec<u8>> {
+        let mut reader = FrameReader::new(request, reply_size);
+        let mut stream = stream.iter();
+        while !reader.is_complete() {
+            let chunk: Vec<u8> = stream.by_ref().take(reader.missing()).copied().collect();
+            if chunk.is_empty() {
+                return None;
+            }
+            reader.push(&chunk).unwrap();
+        }
+        Some(reader.into_bytes())
+    }
+
+    #[test]
+    fn test_validate_frame_header() {
+        assert!(validate_frame_header(&STATUS_FRAME, 0x94).is_ok());
+        assert_eq!(
+            validate_frame_header(&VOLTAGES_FRAME_1, 0x94),
+            Err(Error::UnexpectedFrame)
+        );
+    }
+
+    #[test]
+    fn test_status_decode_rejects_other_command() {
+        assert_eq!(
+            Status::decode(&VOLTAGES_FRAME_1).unwrap_err(),
+            Error::UnexpectedFrame
+        );
+    }
+
+    #[test]
+    fn test_frame_reader_skips_stale_frames_and_garbage() {
+        // Tail of a late cell voltages reply, then the status reply
+        let mut stream = vec![0x0D, 0xDA, 0x49, 0x47];
+        stream.extend_from_slice(&VOLTAGES_FRAME_2);
+        stream.extend_from_slice(&STATUS_FRAME);
+        let reply = read_frames(
+            &Status::request(Address::Host),
+            Status::reply_size(),
+            &stream,
+        );
+        assert_eq!(reply.unwrap(), STATUS_FRAME);
+    }
+
+    #[test]
+    fn test_frame_reader_resyncs_on_start_byte_in_payload() {
+        // A start byte inside garbage must not shift the frame boundaries
+        let mut stream = vec![0xA5, 0x01, 0x95];
+        stream.extend_from_slice(&STATUS_FRAME);
+        let reply = read_frames(
+            &Status::request(Address::Host),
+            Status::reply_size(),
+            &stream,
+        );
+        assert_eq!(reply.unwrap(), STATUS_FRAME);
+    }
+
+    #[test]
+    fn test_frame_reader_multi_frame_restarts_on_first_frame() {
+        // Frame 2 of an earlier reply, then the complete new reply
+        let mut stream = VOLTAGES_FRAME_2.to_vec();
+        stream.extend_from_slice(&VOLTAGES_FRAME_1);
+        stream.extend_from_slice(&VOLTAGES_FRAME_2);
+        let reply = read_frames(
+            &CellVoltages::request(Address::Host),
+            CellVoltages::reply_size(6),
+            &stream,
+        )
+        .unwrap();
+        let voltages = CellVoltages::decode(&reply, 6).unwrap();
+        assert_eq!(*voltages, [3.544, 3.544, 3.543, 3.545, 3.545, 3.544]);
+    }
+
+    #[test]
+    fn test_frame_reader_gives_up_on_garbage() {
+        let mut reader = FrameReader::new(&Status::request(Address::Host), Status::reply_size());
+        let garbage = [0x00; MAX_DISCARDED_BYTES + 1];
+        assert_eq!(reader.push(&garbage), Err(Error::UnexpectedFrame));
     }
 }
