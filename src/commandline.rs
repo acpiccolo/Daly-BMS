@@ -89,7 +89,7 @@ pub enum DaemonOutput {
     /// Continuously read metrics and publish them to an MQTT broker.
     Mqtt {
         /// The configuration file for the MQTT broker
-        #[arg(long, default_value_t = mqtt::MqttConfig::DEFAULT_CONFIG_FILE.to_string())]
+        #[arg(long = "mqtt-config", visible_alias = "config-file", default_value_t = mqtt::MqttConfig::DEFAULT_CONFIG_FILE.to_string())]
         config_file: String,
         /// Output format for MQTT messages
         #[arg(long, value_enum, default_value_t = MqttFormat::Simple)]

@@ -243,11 +243,11 @@ dalybms daemon [OPTIONS]
 All MQTT connection parameters are configured through a YAML file. This approach centralizes settings like the broker URL, credentials, topic, QoS, and client ID.
 
 **Path Specification:**
-- Use the `--config-file <PATH>` option to specify the path to your MQTT configuration file. For example:
+- Use the `--mqtt-config <PATH>` option to specify the path to your MQTT configuration file. For example:
   ```sh
-  dalybms daemon --output mqtt --config-file /path/to/your/mqtt.yaml
+  dalybms daemon mqtt --mqtt-config /path/to/your/mqtt.yaml
   ```
-- If the `--config-file <PATH>` option is **not** provided, the application will attempt to load `mqtt.yaml` from the current working directory.
+- If the `--mqtt-config <PATH>` option is **not** provided, the application will attempt to load `mqtt.yaml` from the current working directory.
 
 If the specified configuration file (either via option or the default `mqtt.yaml`) is not found, cannot be read, or is improperly formatted, the program will exit with an error.
 
