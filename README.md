@@ -238,7 +238,7 @@ dalybms daemon [OPTIONS]
     client_id: "dalybms_1" # Optional
     ```
 
-### MQTT Configuration (`mqtt.yaml`)
+### MQTT Configuration (`mqtt.yaml` & Environment Variables)
 
 When using `--output mqtt`, the tool requires a configuration file named `mqtt.yaml` in the root directory where you run the `dalybms` command.
 
@@ -250,6 +250,16 @@ This file contains details for connecting to your MQTT broker:
 *   `topic`: (String, Optional) Base MQTT topic to publish data to. Defaults to "dalybms" if not set.
 *   `qos` (Integer, Optional): MQTT Quality of Service level (0, 1, or 2). Defaults to 0 if not set.
 *   `client_id`: (String, Optional) Custom client ID for this connection. If blank or omitted, a default ID (e.g., "dalybms-<random_suffix>") will be generated.
+
+#### Environment Variables Override
+
+You can also override or specify configuration values via environment variables (useful for containerized environments or avoiding plain-text credentials in configuration files):
+
+*   `MQTT_URI`: Overrides `uri`
+*   `MQTT_USERNAME`: Overrides `username`
+*   `MQTT_PASSWORD`: Overrides `password`
+*   `MQTT_TOPIC`: Overrides `topic`
+*   `MQTT_CLIENT_ID`: Overrides `client_id`
 
 Please refer to the example `mqtt.yaml` file in the repository for exact formatting and more comments.
 

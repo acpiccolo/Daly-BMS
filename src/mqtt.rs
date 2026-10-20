@@ -77,8 +77,26 @@ impl MqttConfig {
         log::debug!("Loading config file from {config_file_path:?}");
         let config_file = std::fs::File::open(config_file_path)
             .with_context(|| format!("Cannot open MQTT config file {config_file_path:?}"))?;
-        let config: Self = serde_yaml::from_reader(&config_file)
+        let mut config: Self = yaml_serde::from_reader(&config_file)
             .with_context(|| format!("Cannot read MQTT config from file: {config_file_path:?}"))?;
+
+        // Override settings with environment variables if set
+        if let Ok(env_uri) = std::env::var("MQTT_URI") {
+            config.uri = env_uri;
+        }
+        if let Ok(env_user) = std::env::var("MQTT_USERNAME") {
+            config.username = Some(env_user);
+        }
+        if let Ok(env_pass) = std::env::var("MQTT_PASSWORD") {
+            config.password = Some(env_pass);
+        }
+        if let Ok(env_topic) = std::env::var("MQTT_TOPIC") {
+            config.topic = env_topic;
+        }
+        if let Ok(env_client_id) = std::env::var("MQTT_CLIENT_ID") {
+            config.client_id = env_client_id;
+        }
+
         Ok(config)
     }
 

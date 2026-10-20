@@ -190,6 +190,19 @@ pub fn run(
     );
     let available_metrics = get_metrics();
 
+    // Validate metrics before starting the loop
+    if !metrics_to_fetch.iter().any(|m| m == "all") {
+        for metric_name in &metrics_to_fetch {
+            if !available_metrics.contains_key(metric_name.as_str()) {
+                bail!(
+                    "Unknown metric name '{}'. Valid metrics are: {:?}, or 'all'.",
+                    metric_name,
+                    available_metrics.keys().copied().collect::<Vec<_>>()
+                );
+            }
+        }
+    }
+
     let mut mqtt_publisher: Option<mqtt::MqttPublisher> = None;
 
     if let commandline::DaemonOutput::Mqtt { config_file, .. } = &output {
@@ -202,7 +215,17 @@ pub fn run(
         mqtt_publisher = Some(publisher);
     }
 
-    loop {
+    let running = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let r = running.clone();
+
+    if let Err(e) = ctrlc::set_handler(move || {
+        info!("Received shutdown signal. Stopping daemon gracefully...");
+        r.store(false, std::sync::atomic::Ordering::SeqCst);
+    }) {
+        warn!("Failed to set Ctrl-C handler: {e}");
+    }
+
+    while running.load(std::sync::atomic::Ordering::SeqCst) {
         let mut fetched_data: HashMap<String, FetchedData> = HashMap::new();
         let mut metrics_to_process = metrics_to_fetch.clone();
 
@@ -308,6 +331,15 @@ pub fn run(
                 }
             }
         }
-        std::thread::sleep(interval);
+        // Sleep in small steps to react quickly to shutdown signals
+        let sleep_step = std::time::Duration::from_millis(100).min(interval);
+        let mut elapsed = std::time::Duration::ZERO;
+        while elapsed < interval && running.load(std::sync::atomic::Ordering::SeqCst) {
+            std::thread::sleep(sleep_step);
+            elapsed += sleep_step;
+        }
     }
+
+    info!("Daemon stopped cleanly.");
+    Ok(())
 }

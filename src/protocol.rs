@@ -1348,18 +1348,15 @@ impl SetSoc {
     /// This is a low-level function. Users might prefer client methods.
     pub fn request(address: Address, soc_percent: f32) -> Vec<u8> {
         let mut tx_buffer = create_request_header(address, Self::COMMAND);
-        let value = {
-            let val = (soc_percent * 10.0).round();
-            if val > 1000.0 {
-                // BMS expects value * 10, so 100.0% is 1000
-                1000
-            } else if val < 0.0 {
-                0
-            } else {
-                val as u16
-            }
+        let clamped_percent = soc_percent.clamp(0.0, 100.0);
+        if (soc_percent - clamped_percent).abs() > f32::EPSILON {
+            log::warn!(
+                "SOC percentage {:.1}% is out of valid range (0.0% - 100.0%). Clamping value to {:.1}%.",
+                soc_percent,
+                clamped_percent
+            );
         }
-        .to_be_bytes();
+        let value = ((clamped_percent * 10.0).round() as u16).to_be_bytes();
         tx_buffer[10] = value[0]; // SOC high byte
         tx_buffer[11] = value[1]; // SOC low byte
         calc_crc_and_set(&mut tx_buffer);
