@@ -50,8 +50,10 @@ impl FetchedData {
     }
 }
 
+type MetricFetcher = Box<dyn Fn(&mut DalyBMS) -> Result<FetchedData>>;
+
 struct Metric<'a> {
-    fetch: Box<dyn Fn(&mut DalyBMS) -> Result<FetchedData>>,
+    fetch: MetricFetcher,
     dependencies: &'a [&'a str],
 }
 
