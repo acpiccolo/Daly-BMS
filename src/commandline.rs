@@ -43,15 +43,25 @@ pub enum CliCommands {
         /// Enable the discharge MOSFET. If this flag is not present, it will be disabled.
         #[clap(long, short, action)]
         enable: bool,
+        /// Force execution without interactive confirmation when disabling
+        #[clap(long, action)]
+        force: bool,
     },
     /// Enable or disable the charge MOSFET
     SetChargeMosfet {
         /// Enable the charge MOSFET. If this flag is not present, it will be disabled.
         #[clap(long, short, action)]
         enable: bool,
+        /// Force execution without interactive confirmation when disabling
+        #[clap(long, action)]
+        force: bool,
     },
     /// Reset the BMS to factory settings (Use with caution!)
-    Reset,
+    Reset {
+        /// Force execution without interactive confirmation
+        #[clap(long, action)]
+        force: bool,
+    },
     /// Run in daemon mode, periodically fetching and outputting metrics
     Daemon {
         /// Output destination for metrics

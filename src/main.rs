@@ -141,15 +141,56 @@ fn main() -> Result<()> {
             print_info("SOC", || bms.get_soc().with_context(|| "Cannot get SOC"))?;
         }
         commandline::CliCommands::SetSoc { soc_percent } => {
+            if !(0.0..=100.0).contains(&soc_percent) {
+                let clamped = soc_percent.clamp(0.0, 100.0);
+                eprintln!(
+                    "Warning: Input SOC {:.1}% is out of range [0.0 - 100.0]%. Falling back to {:.1}%.",
+                    soc_percent, clamped
+                );
+            }
             bms.set_soc(soc_percent).with_context(|| "Cannot set SOC")?
         }
-        commandline::CliCommands::SetChargeMosfet { enable } => bms
-            .set_charge_mosfet(enable)
-            .with_context(|| "Cannot set charge mosfet")?,
-        commandline::CliCommands::SetDischargeMosfet { enable } => bms
-            .set_discharge_mosfet(enable)
-            .with_context(|| "Cannot set discharge mosfet")?,
-        commandline::CliCommands::Reset => bms.reset()?,
+        commandline::CliCommands::SetChargeMosfet { enable, force } => {
+            if !enable && !force {
+                eprintln!("Warning: Disabling the charge MOSFET will prevent the battery from charging.");
+                eprintln!("Pass --force to skip confirmation. Continue? [y/N]");
+                let mut input = String::new();
+                std::io::stdin().read_line(&mut input)?;
+                if !input.trim().eq_ignore_ascii_case("y") {
+                    eprintln!("Operation cancelled.");
+                    return Ok(());
+                }
+            }
+            bms.set_charge_mosfet(enable)
+                .with_context(|| "Cannot set charge mosfet")?
+        }
+        commandline::CliCommands::SetDischargeMosfet { enable, force } => {
+            if !enable && !force {
+                eprintln!("Warning: Disabling the discharge MOSFET will cut power output from the battery!");
+                eprintln!("Pass --force to skip confirmation. Continue? [y/N]");
+                let mut input = String::new();
+                std::io::stdin().read_line(&mut input)?;
+                if !input.trim().eq_ignore_ascii_case("y") {
+                    eprintln!("Operation cancelled.");
+                    return Ok(());
+                }
+            }
+            bms.set_discharge_mosfet(enable)
+                .with_context(|| "Cannot set discharge mosfet")?
+        }
+        commandline::CliCommands::Reset { force } => {
+            if !force {
+                eprintln!("CRITICAL WARNING: Resetting the BMS to factory defaults may alter essential operating parameters!");
+                eprintln!("Pass --force to skip confirmation. Are you sure you want to proceed? [y/N]");
+                let mut input = String::new();
+                std::io::stdin().read_line(&mut input)?;
+                if !input.trim().eq_ignore_ascii_case("y") {
+                    eprintln!("Operation cancelled.");
+                    return Ok(());
+                }
+            }
+            bms.reset()?
+        }
         commandline::CliCommands::Daemon {
             output,
             interval,
