@@ -1754,7 +1754,7 @@ mod tests {
         combined_bytes.extend_from_slice(&frame1);
         combined_bytes.extend_from_slice(&frame2);
 
-        let expected_voltages = vec![3.300, 3.301, 3.302, 3.303];
+        let expected_voltages = [3.300, 3.301, 3.302, 3.303];
 
         match CellVoltages::decode(&combined_bytes, 4) {
             Ok(decoded) => {

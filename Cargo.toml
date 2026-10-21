@@ -33,9 +33,9 @@ bin-dependencies = [
     "dep:chrono",
     "dep:paho-mqtt",
     "dep:yaml_serde",
+    "dep:ctrlc",
     "dep:rand",
     "dep:serde_json",
-    "dep:ctrlc",
     "dep:humantime-serde",
 ]
 
