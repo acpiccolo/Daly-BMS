@@ -342,6 +342,10 @@ pub fn run(
         }
     }
 
+    if let Some(publisher) = &mqtt_publisher {
+        publisher.disconnect();
+    }
+
     info!("Daemon stopped cleanly.");
     Ok(())
 }
