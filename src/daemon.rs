@@ -217,17 +217,26 @@ pub fn run(
         mqtt_publisher = Some(publisher);
     }
 
-    let running = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
-    let r = running.clone();
+    let shutdown_pair = std::sync::Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()));
 
-    if let Err(e) = ctrlc::set_handler(move || {
-        info!("Received shutdown signal. Stopping daemon gracefully...");
-        r.store(false, std::sync::atomic::Ordering::SeqCst);
+    if let Err(e) = ctrlc::set_handler({
+        let shutdown_pair = shutdown_pair.clone();
+        move || {
+            info!("Received shutdown signal. Stopping daemon gracefully...");
+            let (lock, cvar) = &*shutdown_pair;
+            if let Ok(mut shutdown) = lock.lock() {
+                *shutdown = true;
+                cvar.notify_all();
+            }
+        }
     }) {
         warn!("Failed to set Ctrl-C handler: {e}");
     }
 
-    while running.load(std::sync::atomic::Ordering::SeqCst) {
+    let (lock, cvar) = &*shutdown_pair;
+    let mut shutdown = lock.lock().unwrap();
+
+    while !*shutdown {
         let mut fetched_data: HashMap<String, FetchedData> = HashMap::new();
         let mut metrics_to_process = metrics_to_fetch.clone();
 
@@ -333,13 +342,12 @@ pub fn run(
                 }
             }
         }
-        // Sleep in small steps to react quickly to shutdown signals
-        let sleep_step = std::time::Duration::from_millis(100).min(interval);
-        let mut elapsed = std::time::Duration::ZERO;
-        while elapsed < interval && running.load(std::sync::atomic::Ordering::SeqCst) {
-            std::thread::sleep(sleep_step);
-            elapsed += sleep_step;
+        if *shutdown {
+            break;
         }
+
+        let result = cvar.wait_timeout(shutdown, interval).unwrap();
+        shutdown = result.0;
     }
 
     if let Some(publisher) = &mqtt_publisher {
