@@ -263,7 +263,7 @@ The YAML file allows you to set the following parameters:
 - `topic` (String, Optional): Base MQTT topic. Defaults to "dalybms" if not set.
 - `qos` (Integer, Optional): MQTT Quality of Service level (0, 1, or 2). Defaults to 0 if not set.
 - `client_id` (String, Optional): Client ID for the MQTT connection. If omitted, a random ID (e.g., "dalybms-<random_suffix>") is generated.
-- `oparation_timeout` (Duration, Optional): Timeout for MQTT operations (e.g., "10s").
+- `operation_timeout` (Duration, Optional): Timeout for MQTT operations (e.g., "10s").
 - `keep_alive_interval` (Duration, Optional): MQTT keep-alive ping interval (e.g., "30s").
 - `auto_reconnect_interval_min` (Duration, Optional): Minimum automatic reconnect backoff interval (e.g., "1s").
 - `auto_reconnect_interval_max` (Duration, Optional): Maximum automatic reconnect backoff interval (e.g., "30s").
