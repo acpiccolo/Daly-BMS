@@ -284,7 +284,10 @@ pub fn run(
             }
             commandline::DaemonOutput::Mqtt { format, .. } => {
                 if let Some(publisher) = &mqtt_publisher {
-                    match format {
+                    if !publisher.check_connection() {
+                        // Connection is currently lost, skip publishing
+                    } else {
+                        match format {
                         commandline::MqttFormat::Json => {
                             let mut data_to_publish = serde_json::Map::new();
                             data_to_publish.insert(
@@ -333,6 +336,7 @@ pub fn run(
                                     Err(e) => error!("Failed to serialize '{name}': {e}"),
                                 }
                             }
+                        }
                         }
                     }
                 } else {
