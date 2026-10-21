@@ -3,7 +3,7 @@ use paho_mqtt::{Client, ConnectOptionsBuilder, CreateOptionsBuilder, MessageBuil
 use serde::Deserialize;
 use std::time::Duration;
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Deserialize, Clone)]
 pub struct MqttConfig {
     uri: String,
     username: Option<String>,
@@ -16,9 +16,10 @@ pub struct MqttConfig {
     client_id: String,
     #[serde(
         default = "MqttConfig::default_operation_timeout",
+        alias = "oparation_timeout",
         with = "humantime_serde"
     )]
-    oparation_timeout: Duration,
+    operation_timeout: Duration,
     #[serde(
         default = "MqttConfig::default_keep_alive_interval",
         with = "humantime_serde"
@@ -34,6 +35,26 @@ pub struct MqttConfig {
         with = "humantime_serde"
     )]
     auto_reconnect_interval_max: Duration,
+}
+
+impl std::fmt::Debug for MqttConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MqttConfig")
+            .field("uri", &self.uri)
+            .field("username", &self.username)
+            .field(
+                "password",
+                &self.password.as_ref().map(|_| "********"),
+            )
+            .field("topic", &self.topic)
+            .field("qos", &self.qos)
+            .field("client_id", &self.client_id)
+            .field("operation_timeout", &self.operation_timeout)
+            .field("keep_alive_interval", &self.keep_alive_interval)
+            .field("auto_reconnect_interval_min", &self.auto_reconnect_interval_min)
+            .field("auto_reconnect_interval_max", &self.auto_reconnect_interval_max)
+            .finish()
+    }
 }
 
 impl MqttConfig {
@@ -110,7 +131,7 @@ impl MqttConfig {
         let mut client = Client::new(create_opts)
             .with_context(|| format!("Error creating MQTT client for server: {}", self.uri))?;
 
-        client.set_timeout(self.oparation_timeout);
+        client.set_timeout(self.operation_timeout);
 
         let mut conn_builder = ConnectOptionsBuilder::new();
         conn_builder
