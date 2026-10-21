@@ -1,157 +1,148 @@
 # Daly BMS Additional Communication Commands & Byte Layouts
 
-This document details additional Daly BMS protocol commands beyond those implemented in the core library, including their exact frame structures, byte layouts, data conversions, and references/sources.
+> **Disclaimer:** The commands and byte structures documented in this specification have been aggregated from various open-source projects, community reverse-engineering efforts, and manufacturer documentation. Some commands may vary across different Daly BMS hardware revisions and firmware versions (e.g., standard UART V1.2 vs. DL_HKMS firmware series) and may not be fully verified on all hardware models.
 
 ---
 
-## Frame Structure Overview
+## Command Overview Table
 
-All Daly BMS UART/RS485 frames follow a fixed 13-byte structure:
+| CMD | Description | Tested / Verification | Primary Source / Reference |
+|---|---|---|---|
+| `0x01` | System Sleep / Deep Power Down | Not Tested | Daly Upper Computer Protocol |
+| `0x02` | MCU Wakeup Command | Not Tested | Daly Upper Computer Protocol |
+| `0x10` / `0x20` | Cell Overvoltage Protection Threshold | Not Tested | Daly UART Protocol V1.2 (Sec. 4) |
+| `0x11` / `0x21` | Cell Undervoltage Protection Threshold | Not Tested | Daly UART Protocol V1.2 (Sec. 4) |
+| `0x12` / `0x22` | Pack / Sum Overvoltage Threshold | Not Tested | Daly UART Protocol V1.2 (Sec. 4) |
+| `0x13` / `0x23` | Pack / Sum Undervoltage Threshold | Not Tested | Daly UART Protocol V1.2 (Sec. 4) |
+| `0x14` / `0x24` | Charge Overcurrent Protection Threshold | Not Tested | Daly UART Protocol V1.2 (Sec. 4) |
+| `0x15` / `0x25` | Discharge Overcurrent Protection Threshold | Not Tested | Daly UART Protocol V1.2 (Sec. 4) |
+| `0x16` / `0x26` | Balance Start Voltage & Delta | Not Tested | Daly UART Protocol V1.2 (Sec. 4) |
+| `0x2F` | Set Nominal Pack Capacity (Ah) | Not Tested | VenusOS Daly BMS / dbus-serialbattery |
+| `0x50` | RTC Time (Legacy V1.2) / Rated Capacity (DL_HKMS) | Not Tested | Daly Protocol V1.2 & `dignifiedquire/Daly-BMS` |
+| `0x51` | Hardware & Firmware Info / Board Config | Not Tested | Daly Protocol V1.2 & `dignifiedquire/Daly-BMS` |
+| `0x52` | Serial Number (Legacy) / Lifetime Accumulated Ah (DL_HKMS) | Not Tested | Daly Protocol V1.2 & `dignifiedquire/Daly-BMS` |
+| `0x53` | Production Date & Raw Battery Operating Info | Not Tested | `dignifiedquire/Daly-BMS` |
+| `0x57` | Multi-frame Serial Number / Battery Code | Not Tested | `dignifiedquire/Daly-BMS` |
+| `0x61` | Real-Time Clock (RTC) Date & Time | Not Tested | `dignifiedquire/Daly-BMS` |
+| `0x62` | Software / Firmware Version String (ASCII) | Not Tested | `dignifiedquire/Daly-BMS` |
+| `0x63` | Hardware Version String (ASCII) | Not Tested | `dignifiedquire/Daly-BMS` |
+| `0x94` | Status Frame (Byte 7 MOSFET Temp Variant) | Not Tested | `dignifiedquire/Daly-BMS` |
+| `0x99` | Rated Capacity & Parameter Overview | Not Tested | Daly UART Protocol V1.2 (Sec. 3.10) |
 
-| Byte Index | Field | Description |
+---
+
+## Standard Frame Structure
+
+All Daly BMS UART/RS485 frames consist of 13 bytes:
+
+| Byte Index | Field Name | Description |
 |---|---|---|
-| `0` | Start Byte | `0xA5` (Fixed) |
-| `1` | Address | `0x40` (Host) or `0x80` (BMS) |
-| `2` | Command (CMD) | Command identifier byte (e.g. `0x90`, `0x50`, `0x10`) |
-| `3` | Data Length | `0x08` (Fixed 8 bytes of payload) |
-| `4..11` | Data Payload | 8 data bytes (`DATA0` .. `DATA7`) |
-| `12` | Checksum (CRC) | Sum of bytes 0 to 11 modulo 256 (`SUM(Byte[0..11]) % 256`) |
+| `0` | Start Byte | Fixed header byte `0xA5` |
+| `1` | Address | `0x40` (Host) or `0x80` / `0x01` (BMS) |
+| `2` | Command Code | Command ID byte (e.g. `0x90`, `0x50`, `0x61`) |
+| `3` | Data Length | Fixed payload size `0x08` (8 bytes) |
+| `4..11` | Payload Bytes | `DATA0` to `DATA7` |
+| `12` | Checksum | Sum modulo 256 of bytes 0 to 11 |
 
 ---
 
-## 1. RTC Date & Time Setting & Reading (`0x50`)
+## Detailed Command Specifications & Byte Layouts
 
-Used to read or synchronize the real-time clock inside the BMS.
+### 1. Rated Capacity & Nominal Voltage (`0x50` / `0x99`)
 
-* **Request Frame (`Host -> BMS`):**
-  - `CMD`: `0x50`
-  - Payload:
-    - `DATA0`: Year (e.g., `24` for 2024)
-    - `DATA1`: Month (`1..12`)
-    - `DATA2`: Day of Month (`1..31`)
-    - `DATA3`: Hour (`0..23`)
-    - `DATA4`: Minute (`0..59`)
-    - `DATA5`: Second (`0..59`)
-    - `DATA6..7`: `0x00`
-* **Response Frame (`BMS -> Host`):** Echoes the current or newly set date/time in the same byte layout.
-* **Sources / References:**
-  - *Daly UART/RS485 Protocol V1.2* (`docs/Daly UART_485 Communications Protocol V1.2.pdf`, Section 3.1)
-  - ESPHome Daly BMS Integration (`esphome/components/daly_bms`)
+* **Tested / Verification:** Not Tested
+* **Description:** Depending on BMS firmware variant:
+  - On **DL_HKMS** series: `0x50` returns rated capacity and nominal cell voltage.
+  - On **Legacy V1.2**: `0x50` is used for RTC setting, while `0x99` returns rated capacity.
+* **Request (`Host -> BMS`):** `[0xA5, 0x40, 0x50, 0x08, 0, 0, 0, 0, 0, 0, 0, 0, CRC]`
+* **Response Payload (`DATA0..DATA7`):**
+  - `DATA0..3`: Rated / Design Capacity in milli-Ah (u32 BE, divide by `1000.0` for Ah)
+  - `DATA4..7`: Nominal Cell Voltage in milli-Volts (u32 BE, divide by `1000.0` for V)
 
 ---
 
-## 2. Hardware, Software & Production Date Info (`0x51`)
+### 2. Lifetime Accumulated Charge & Discharge (`0x52`)
 
-Retrieves production date, hardware version, and firmware version.
+* **Tested / Verification:** Not Tested
+* **Description:** On newer firmware (e.g. DL_HKMS), `0x52` returns cumulative lifetime Ampere-hours charged and discharged.
+* **Request (`Host -> BMS`):** `[0xA5, 0x40, 0x52, 0x08, 0, 0, 0, 0, 0, 0, 0, 0, CRC]`
+* **Response Payload (`DATA0..DATA7`):**
+  - `DATA0..3`: Total Lifetime Charged Ah (u32 BE, divide by `1000.0` or `1.0` depending on scaling)
+  - `DATA4..7`: Total Lifetime Discharged Ah (u32 BE, divide by `1000.0` or `1.0`)
 
-* **Request Frame (`Host -> BMS`):**
-  - `CMD`: `0x51`
-  - Payload: All `0x00`
-* **Response Frame (`BMS -> Host`):**
-  - `DATA0`: Production Year (offset 2000, e.g., `21` = 2021)
+---
+
+### 3. Production Date & Operating Parameters (`0x53`)
+
+* **Tested / Verification:** Not Tested
+* **Description:** Reads production date and raw operating configuration flags.
+* **Request (`Host -> BMS`):** `[0xA5, 0x40, 0x53, 0x08, 0, 0, 0, 0, 0, 0, 0, 0, CRC]`
+* **Response Payload (`DATA0..DATA7`):**
+  - `DATA0`: Production Year (e.g. `22` = 2022)
   - `DATA1`: Production Month (`1..12`)
   - `DATA2`: Production Day (`1..31`)
-  - `DATA3`: Hardware Version Major/Minor (`0x10` = v1.0)
-  - `DATA4`: Software/Firmware Version Major
-  - `DATA5`: Software/Firmware Version Minor
-  - `DATA6..7`: Reserved
-* **Sources / References:**
-  - *Daly UART/RS485 Protocol V1.2* (Section 3.2)
-  - VenusOS Daly BMS Driver (`Louisvdw/dbus-serialbattery`)
+  - `DATA3`: Operating mode / battery type flag byte
+  - `DATA4`: Auto-sleep delay setting
+  - `DATA5..7`: Reserved
 
 ---
 
-## 3. Device ID, Serial Number & Bluetooth Name (`0x52`)
+### 4. Multi-Frame Serial / Battery Code String (`0x57`)
 
-Retrieves device string identifier / serial number in multi-frame ASCII format.
-
-* **Request Frame (`Host -> BMS`):**
-  - `CMD`: `0x52`
-  - Payload: All `0x00`
-* **Response Frame (`BMS -> Host`):**
-  - Returned in 1 to 3 sequential frames (Frame Number in `DATA0`).
-  - `DATA0`: Frame index (`0x01`, `0x02`, ...)
-  - `DATA1..7`: ASCII bytes of serial number / ID string.
-* **Sources / References:**
-  - *Daly UART/RS485 Protocol V1.2* (Section 3.3)
-  - Community protocol teardowns (e.g. *diysolarforum.com - Daly UART protocol specs*)
+* **Tested / Verification:** Not Tested
+* **Description:** Reads battery code string across 5 concatenated response frames.
+* **Request (`Host -> BMS`):** `[0xA5, 0x40, 0x57, 0x08, 0, 0, 0, 0, 0, 0, 0, 0, CRC]`
+* **Response Payload:**
+  - Received across 5 frames with frame index in `DATA0` (`1..5`).
+  - `DATA1..7` of each frame contains ASCII string fragments.
 
 ---
 
-## 4. Parameter Overview & Rated Capacity (`0x99`)
+### 5. Real-Time Clock (RTC) Date & Time (`0x61` / `0x50`)
 
-Provides nominal capacity and high-level protection parameter summary.
-
-* **Request Frame (`Host -> BMS`):**
-  - `CMD`: `0x99`
-  - Payload: All `0x00`
-* **Response Frame (`BMS -> Host`):**
-  - `DATA0..1`: Cell Nominal Voltage (u16 BE, divide by `1000.0` for Volts)
-  - `DATA2..5`: Rated Capacity (u32 BE, divide by `1000.0` for Ah)
-  - `DATA6`: Number of cell samples
-  - `DATA7`: Number of temperature sensors
-* **Sources / References:**
-  - *Daly UART/RS485 Protocol V1.2* (Section 3.10)
-  - VenusOS Daly BMS Driver
+* **Tested / Verification:** Not Tested
+* **Description:** On modern firmware (DL_HKMS), `0x61` reads or sets the BMS internal clock.
+* **Request Payload (`DATA0..DATA7`):**
+  - `DATA0`: Year (e.g. `24` for 2024)
+  - `DATA1`: Month (`1..12`)
+  - `DATA2`: Day of Month (`1..31`)
+  - `DATA3`: Hour (`0..23`)
+  - `DATA4`: Minute (`0..59`)
+  - `DATA5`: Second (`0..59`)
+  - `DATA6..7`: `0x00`
 
 ---
 
-## 5. Protection Parameter Configuration Commands (`0x10` .. `0x3F`)
+### 6. Software & Hardware Version Strings (`0x62` / `0x63`)
 
-These commands read (`0x10`..`0x1F`) or set (`0x20`..`0x3F`) internal BMS threshold limits.
-
-### A. Cell Overvoltage Threshold (`Read: 0x10` / `Write: 0x20`)
-* **Data Payload:**
-  - `DATA0..1`: Cell Overvoltage Protection Voltage (u16 BE, divide by `1000.0` for V, e.g. `3650` = 3.650V)
-  - `DATA2..3`: Cell Overvoltage Release Voltage (u16 BE, divide by `1000.0` for V, e.g. `3550` = 3.550V)
-  - `DATA4`: Delay time in seconds
-
-### B. Cell Undervoltage Threshold (`Read: 0x11` / `Write: 0x21`)
-* **Data Payload:**
-  - `DATA0..1`: Cell Undervoltage Protection Voltage (u16 BE, divide by `1000.0` for V, e.g. `2500` = 2.500V)
-  - `DATA2..3`: Cell Undervoltage Release Voltage (u16 BE, divide by `1000.0` for V, e.g. `2800` = 2.800V)
-  - `DATA4`: Delay time in seconds
-
-### C. Sum Overvoltage Threshold (`Read: 0x12` / `Write: 0x22`)
-* **Data Payload:**
-  - `DATA0..1`: Pack Overvoltage Protection Voltage (u16 BE, divide by `10.0` for V)
-  - `DATA2..3`: Pack Overvoltage Release Voltage (u16 BE, divide by `10.0` for V)
-  - `DATA4`: Delay time in seconds
-
-### D. Sum Undervoltage Threshold (`Read: 0x13` / `Write: 0x23`)
-* **Data Payload:**
-  - `DATA0..1`: Pack Undervoltage Protection Voltage (u16 BE, divide by `10.0` for V)
-  - `DATA2..3`: Pack Undervoltage Release Voltage (u16 BE, divide by `10.0` for V)
-  - `DATA4`: Delay time in seconds
-
-### E. Charge Overcurrent Protection (`Read: 0x14` / `Write: 0x24`)
-* **Data Payload:**
-  - `DATA0..1`: Charge Overcurrent Protection Current (u16 BE, offset `30000`, divide by `10.0` for Amps)
-  - `DATA2`: Delay time in seconds
-
-### F. Discharge Overcurrent Protection (`Read: 0x15` / `Write: 0x25`)
-* **Data Payload:**
-  - `DATA0..1`: Discharge Overcurrent Protection Current (u16 BE, offset `30000`, divide by `10.0` for Amps)
-  - `DATA2`: Delay time in seconds
-
-### G. Balance Start Voltage & Delta (`Read: 0x16` / `Write: 0x26`)
-* **Data Payload:**
-  - `DATA0..1`: Balance Start Voltage (u16 BE, divide by `1000.0` for V, e.g., `3400` = 3.400V)
-  - `DATA2..3`: Balance Start Differential Voltage (u16 BE, divide by `1000.0` for V, e.g., `30` = 0.030V)
-
-* **Sources / References:**
-  - *Daly UART/RS485 Protocol V1.2* (Section 4: Parameter Read & Write Settings)
-  - Daly Upper Computer PC Software Protocol Specification
+* **Tested / Verification:** Not Tested
+* **Description:**
+  - `0x62`: Software/Firmware Version ASCII String (multi-frame)
+  - `0x63`: Hardware Version ASCII String (multi-frame)
+* **Request (`Host -> BMS`):** `[0xA5, 0x40, <0x62|0x63>, 0x08, 0, 0, 0, 0, 0, 0, 0, 0, CRC]`
+* **Response Payload:** `DATA0` contains frame sequence number; `DATA1..7` contains ASCII string.
 
 ---
 
-## 6. System Sleep, Wakeup & Shutdown (`0x01` / `0x02`)
+### 7. Status Frame Byte 7 MOSFET Temperature Variant (`0x94`)
 
-* **BMS Sleep / Shutdown (`0x01`):**
-  - **Request:** `CMD`: `0x01`, `DATA0..7`: `0x00`
-  - Forces the BMS into deep sleep / power down mode.
-* **BMS Wakeup (`0x02`):**
-  - Send a dummy UART pulse or frame `CMD`: `0x02` to wake up the BMS MCU from sleep mode.
-* **Sources / References:**
-  - Daly Upper Computer Protocol Manual
-  - OpenInverter Daly BMS driver notes
+* **Tested / Verification:** Not Tested
+* **Description:** Standard status command `0x94`. On select firmware variants, `DATA7` (byte index 7) reports the MOSFET / board temperature in degrees Celsius with a -40°C offset.
+* **Conversion:** `temperature = (DATA7 as i16) - 40` (Valid when `DATA7 > 0`).
+
+---
+
+### 8. Protection Threshold Settings (`0x10` .. `0x26`)
+
+* **Tested / Verification:** Not Tested
+* **Cell Overvoltage (`0x10` Read / `0x20` Write):**
+  - `DATA0..1`: Overvoltage Trigger Voltage (u16 BE, mV, e.g. `3650` = 3.650V)
+  - `DATA2..3`: Overvoltage Release Voltage (u16 BE, mV, e.g. `3550` = 3.550V)
+  - `DATA4`: Protection Delay (seconds)
+* **Cell Undervoltage (`0x11` Read / `0x21` Write):**
+  - `DATA0..1`: Undervoltage Trigger Voltage (u16 BE, mV, e.g. `2500` = 2.500V)
+  - `DATA2..3`: Undervoltage Release Voltage (u16 BE, mV, e.g. `2800` = 2.800V)
+  - `DATA4`: Protection Delay (seconds)
+* **Balance Start Voltage & Delta (`0x16` Read / `0x26` Write):**
+  - `DATA0..1`: Balance Start Voltage (u16 BE, mV, e.g. `3400` = 3.400V)
+  - `DATA2..3`: Balance Start Differential Voltage (u16 BE, mV, e.g. `30` = 0.030V)
