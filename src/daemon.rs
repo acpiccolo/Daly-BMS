@@ -50,8 +50,10 @@ impl FetchedData {
     }
 }
 
+type MetricFetcher = Box<dyn Fn(&mut DalyBMS) -> Result<FetchedData>>;
+
 struct Metric<'a> {
-    fetch: Box<dyn Fn(&mut DalyBMS) -> Result<FetchedData>>,
+    fetch: MetricFetcher,
     dependencies: &'a [&'a str],
 }
 
@@ -190,6 +192,19 @@ pub fn run(
     );
     let available_metrics = get_metrics();
 
+    // Validate metrics before starting the loop
+    if !metrics_to_fetch.iter().any(|m| m == "all") {
+        for metric_name in &metrics_to_fetch {
+            if !available_metrics.contains_key(metric_name.as_str()) {
+                bail!(
+                    "Unknown metric name '{}'. Valid metrics are: {:?}, or 'all'.",
+                    metric_name,
+                    available_metrics.keys().copied().collect::<Vec<_>>()
+                );
+            }
+        }
+    }
+
     let mut mqtt_publisher: Option<mqtt::MqttPublisher> = None;
 
     if let commandline::DaemonOutput::Mqtt { config_file, .. } = &output {
@@ -202,7 +217,26 @@ pub fn run(
         mqtt_publisher = Some(publisher);
     }
 
-    loop {
+    let shutdown_pair = std::sync::Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()));
+
+    if let Err(e) = ctrlc::set_handler({
+        let shutdown_pair = shutdown_pair.clone();
+        move || {
+            info!("Received shutdown signal. Stopping daemon gracefully...");
+            let (lock, cvar) = &*shutdown_pair;
+            if let Ok(mut shutdown) = lock.lock() {
+                *shutdown = true;
+                cvar.notify_all();
+            }
+        }
+    }) {
+        warn!("Failed to set Ctrl-C handler: {e}");
+    }
+
+    let (lock, cvar) = &*shutdown_pair;
+    let mut shutdown = lock.lock().unwrap();
+
+    while !*shutdown {
         let mut fetched_data: HashMap<String, FetchedData> = HashMap::new();
         let mut metrics_to_process = metrics_to_fetch.clone();
 
@@ -250,7 +284,10 @@ pub fn run(
             }
             commandline::DaemonOutput::Mqtt { format, .. } => {
                 if let Some(publisher) = &mqtt_publisher {
-                    match format {
+                    if !publisher.check_connection() {
+                        // Connection is currently lost, skip publishing
+                    } else {
+                        match format {
                         commandline::MqttFormat::Json => {
                             let mut data_to_publish = serde_json::Map::new();
                             data_to_publish.insert(
@@ -300,6 +337,7 @@ pub fn run(
                                 }
                             }
                         }
+                        }
                     }
                 } else {
                     warn!(
@@ -308,6 +346,18 @@ pub fn run(
                 }
             }
         }
-        std::thread::sleep(interval);
+        if *shutdown {
+            break;
+        }
+
+        let result = cvar.wait_timeout(shutdown, interval).unwrap();
+        shutdown = result.0;
     }
+
+    if let Some(publisher) = &mqtt_publisher {
+        publisher.disconnect();
+    }
+
+    info!("Daemon stopped cleanly.");
+    Ok(())
 }

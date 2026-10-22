@@ -1,9 +1,10 @@
 use anyhow::{Context, Result};
 use paho_mqtt::{Client, ConnectOptionsBuilder, CreateOptionsBuilder, MessageBuilder};
 use serde::Deserialize;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Deserialize, Clone)]
 pub struct MqttConfig {
     uri: String,
     username: Option<String>,
@@ -18,7 +19,7 @@ pub struct MqttConfig {
         default = "MqttConfig::default_operation_timeout",
         with = "humantime_serde"
     )]
-    oparation_timeout: Duration,
+    operation_timeout: Duration,
     #[serde(
         default = "MqttConfig::default_keep_alive_interval",
         with = "humantime_serde"
@@ -34,6 +35,26 @@ pub struct MqttConfig {
         with = "humantime_serde"
     )]
     auto_reconnect_interval_max: Duration,
+}
+
+impl std::fmt::Debug for MqttConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MqttConfig")
+            .field("uri", &self.uri)
+            .field("username", &self.username)
+            .field(
+                "password",
+                &self.password.as_ref().map(|_| "********"),
+            )
+            .field("topic", &self.topic)
+            .field("qos", &self.qos)
+            .field("client_id", &self.client_id)
+            .field("operation_timeout", &self.operation_timeout)
+            .field("keep_alive_interval", &self.keep_alive_interval)
+            .field("auto_reconnect_interval_min", &self.auto_reconnect_interval_min)
+            .field("auto_reconnect_interval_max", &self.auto_reconnect_interval_max)
+            .finish()
+    }
 }
 
 impl MqttConfig {
@@ -77,8 +98,26 @@ impl MqttConfig {
         log::debug!("Loading config file from {config_file_path:?}");
         let config_file = std::fs::File::open(config_file_path)
             .with_context(|| format!("Cannot open MQTT config file {config_file_path:?}"))?;
-        let config: Self = serde_yaml::from_reader(&config_file)
+        let mut config: Self = yaml_serde::from_reader(&config_file)
             .with_context(|| format!("Cannot read MQTT config from file: {config_file_path:?}"))?;
+
+        // Override settings with environment variables if set
+        if let Ok(env_uri) = std::env::var("MQTT_URI") {
+            config.uri = env_uri;
+        }
+        if let Ok(env_user) = std::env::var("MQTT_USERNAME") {
+            config.username = Some(env_user);
+        }
+        if let Ok(env_pass) = std::env::var("MQTT_PASSWORD") {
+            config.password = Some(env_pass);
+        }
+        if let Ok(env_topic) = std::env::var("MQTT_TOPIC") {
+            config.topic = env_topic;
+        }
+        if let Ok(env_client_id) = std::env::var("MQTT_CLIENT_ID") {
+            config.client_id = env_client_id;
+        }
+
         Ok(config)
     }
 
@@ -92,7 +131,7 @@ impl MqttConfig {
         let mut client = Client::new(create_opts)
             .with_context(|| format!("Error creating MQTT client for server: {}", self.uri))?;
 
-        client.set_timeout(self.oparation_timeout);
+        client.set_timeout(self.operation_timeout);
 
         let mut conn_builder = ConnectOptionsBuilder::new();
         conn_builder
@@ -128,12 +167,31 @@ impl MqttConfig {
 pub struct MqttPublisher {
     client: Client,
     config: MqttConfig,
+    was_disconnected: AtomicBool,
 }
 
 impl MqttPublisher {
     pub fn new(config: MqttConfig) -> Result<Self> {
         let client = config.create_client()?;
-        Ok(Self { client, config })
+        Ok(Self {
+            client,
+            config,
+            was_disconnected: AtomicBool::new(false),
+        })
+    }
+
+    pub fn check_connection(&self) -> bool {
+        if !self.client.is_connected() {
+            if !self.was_disconnected.swap(true, Ordering::SeqCst) {
+                log::warn!("MQTT connection lost! Automatic reconnect is active in the background...");
+            }
+            false
+        } else {
+            if self.was_disconnected.swap(false, Ordering::SeqCst) {
+                log::info!("MQTT connection re-established successfully.");
+            }
+            true
+        }
     }
 
     pub fn topic(&self) -> &str {
@@ -159,5 +217,14 @@ impl MqttPublisher {
             .with_context(|| format!("Failed to publish message to MQTT topic: {topic}"))?;
 
         Ok(())
+    }
+
+    pub fn disconnect(&self) {
+        log::info!("Disconnecting from MQTT broker...");
+        if let Err(e) = self.client.disconnect(None) {
+            log::warn!("Error disconnecting from MQTT broker: {e}");
+        } else {
+            log::info!("Disconnected from MQTT broker successfully.");
+        }
     }
 }
