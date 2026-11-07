@@ -1,4 +1,4 @@
-/// Represents the possible errors that can occur in the `dalybms_lib`.
+/// Represents the possible errors that can occur in the .
 #[derive(Debug, thiserror::Error, PartialEq)]
 pub enum Error {
     /// Error indicating an invalid checksum in the received data.
@@ -16,4 +16,9 @@ pub enum Error {
     /// Error indicating that a reply frame does not answer the sent command.
     #[error("Unexpected reply frame")]
     UnexpectedFrame,
+
+    /// Error indicating a field value outside its valid range — a frame that
+    /// passed the checksum but carries data the protocol cannot represent.
+    #[error("Malformed frame data")]
+    MalformedData,
 }

@@ -180,6 +180,24 @@ impl DalyBMS {
         })
     }
 
+    /// Build a client from an already-opened [`tokio_serial::SerialStream`].
+    ///
+    /// Use this when the port is opened elsewhere — e.g. one end of
+    /// [`tokio_serial::SerialStream::pair`] for an in-process simulator/test, or
+    /// a port configured with non-default settings. The stream is used as-is
+    /// (no baud/flow reconfiguration), which also makes it usable with
+    /// pseudo-terminals, where `open()`-by-path would fail on the baud ioctl.
+    pub fn from_stream(serial: tokio_serial::SerialStream) -> Self {
+        Self {
+            serial,
+            last_execution: Instant::now(),
+            delay: MINIMUM_DELAY,
+            io_timeout: Duration::from_secs(5),
+            status: None,
+            retries: 3,
+        }
+    }
+
     /// sets the number of retries for a failed send_bytes operation
     pub fn set_retry(&mut self, n_retries: u8) {
         self.retries = n_retries;
@@ -228,28 +246,66 @@ impl DalyBMS {
         Ok(())
     }
 
-    /// Private async helper to receive the reply frames of a request from the serial port with timeouts.
-    /// Bytes not belonging to the reply (e.g. a late reply to an earlier request) are skipped.
-    async fn receive_frames(&mut self, tx_buffer: &[u8], reply_size: usize) -> Result<Vec<u8>> {
-        let mut reader = FrameReader::new(tx_buffer, reply_size);
-        while !reader.is_complete() {
-            let mut rx_buffer = vec![0; reader.missing()];
-
-            log::trace!("read {} bytes", rx_buffer.len());
-            tokio::time::timeout(self.io_timeout, self.serial.read_exact(&mut rx_buffer)).await??;
-
-            log::trace!("receive_bytes: {rx_buffer:02X?}");
-            reader.push(&rx_buffer)?;
+    /// Reads exactly one 13-byte frame, first resyncing to the `0xA5` start byte
+    /// (dropping any bytes before it). Resyncing per frame means a preceding
+    /// stray/late frame can't leave us reading from a mid-frame offset.
+    async fn receive_one_frame(&mut self) -> Result<[u8; RX_BUFFER_LENGTH]> {
+        let mut byte = [0u8; 1];
+        loop {
+            tokio::time::timeout(self.io_timeout, self.serial.read_exact(&mut byte)).await??;
+            if byte[0] == START_BYTE {
+                break;
+            }
         }
+        let mut frame = [0u8; RX_BUFFER_LENGTH];
+        frame[0] = START_BYTE;
+        tokio::time::timeout(self.io_timeout, self.serial.read_exact(&mut frame[1..])).await??;
+        log::trace!("frame: {frame:02X?}");
+        Ok(frame)
+    }
 
+    /// Receives `reply_size` bytes (a whole number of 13-byte frames) of the
+    /// BMS's reply to the command we just sent, frame by frame.
+    ///
+    /// Some Daly units carry an on-board Bluetooth/UART module that polls the
+    /// BMS over the *same* internal serial bus. Its request frames (`A5 40 ..`)
+    /// — and the BMS's answers to *them* (`A5 01 <other-cmd> ..`) — leak onto
+    /// our port; read blindly they get mis-decoded as our reply (garbage on a
+    /// single-frame read, "frame out of order" on a multi-frame one). So we keep
+    /// only frames that are from the BMS ([`BMS_ADDRESS`]) *for the command we
+    /// asked for* (`expected_cmd`), and skip everything else. Per-frame checksum
+    /// is still validated downstream in each `decode`.
+    async fn receive_frames(&mut self, expected_cmd: u8, reply_size: usize) -> Result<Vec<u8>> {
+        let n_frames = reply_size / RX_BUFFER_LENGTH;
+        let mut out = Vec::with_capacity(reply_size);
+        // Bound the resync so a line flooded with foreign frames fails the read
+        // (→ retry/reconnect) instead of spinning forever.
+        let mut skip_budget = (n_frames + 1) * MAX_STRAY_FRAMES_PER_FRAME;
+        while out.len() < n_frames * RX_BUFFER_LENGTH {
+            let frame = self.receive_one_frame().await?;
+            if is_reply_for(&frame, expected_cmd) {
+                out.extend_from_slice(&frame);
+            } else {
+                log::trace!(
+                    "skip stray frame addr=0x{:02X} cmd=0x{:02X} (want addr=0x{BMS_ADDRESS:02X} cmd=0x{expected_cmd:02X})",
+                    frame[ADDRESS_INDEX],
+                    frame[COMMAND_INDEX]
+                );
+                skip_budget = skip_budget
+                    .checked_sub(1)
+                    .ok_or(Error::DalyError(crate::Error::FrameNoError))?;
+            }
+        }
         self.last_execution = Instant::now(); // Update last execution time
-
-        Ok(reader.into_bytes())
+        Ok(out)
     }
 
     async fn send_and_receive(&mut self, tx_buffer: &[u8], reply_size: usize) -> Result<Vec<u8>> {
         self.send_bytes(tx_buffer).await?;
-        self.receive_frames(tx_buffer, reply_size).await
+        // The command we asked for — everything not addressed from the BMS for
+        // this command (stray BT-module traffic on the shared bus) is skipped.
+        let expected_cmd = tx_buffer[COMMAND_INDEX];
+        self.receive_frames(expected_cmd, reply_size).await
     }
 
     /// Sets the timeout for individual I/O operations (read/write) on the serial port.
@@ -469,6 +525,102 @@ impl DalyBMS {
             ErrorCode,
             &ErrorCode::request(Address::Host),
             ErrorCode::reply_size()
+        )
+    }
+
+    /// Asynchronously retrieves the rated (design) capacity and nominal cell voltage.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing the `RatedCapacity` data or an `Error`.
+    pub async fn get_rated_capacity(&mut self) -> Result<RatedCapacity> {
+        log::trace!("get rated capacity");
+        request_with_retry!(
+            self,
+            RatedCapacity,
+            &RatedCapacity::request(Address::Host),
+            RatedCapacity::reply_size()
+        )
+    }
+
+    /// Asynchronously retrieves battery info: production date plus raw
+    /// operating-mode, type and auto-sleep bytes.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing the `BatteryInfo` data or an `Error`.
+    pub async fn get_battery_info(&mut self) -> Result<BatteryInfo> {
+        log::trace!("get battery info");
+        request_with_retry!(
+            self,
+            BatteryInfo,
+            &BatteryInfo::request(Address::Host),
+            BatteryInfo::reply_size()
+        )
+    }
+
+    /// Asynchronously retrieves the battery code / serial string (fixed 5-frame reply).
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing the `BatteryCode` (dereferences to `&str`) or an `Error`.
+    pub async fn get_battery_code(&mut self) -> Result<BatteryCode> {
+        log::trace!("get battery code");
+        request_with_retry!(
+            self,
+            BatteryCode,
+            &BatteryCode::request(Address::Host),
+            BatteryCode::reply_size()
+        )
+    }
+
+    /// Asynchronously retrieves the lifetime accumulated charge/discharge Ah (`0x52`).
+    pub async fn get_battery_stat(&mut self) -> Result<BatteryStat> {
+        log::trace!("get battery stat");
+        request_with_retry!(
+            self,
+            BatteryStat,
+            &BatteryStat::request(Address::Host),
+            BatteryStat::reply_size()
+        )
+    }
+
+    /// Asynchronously retrieves the BMS config: board / cell / NTC counts (`0x51`).
+    pub async fn get_bms_config(&mut self) -> Result<BmsConfig> {
+        log::trace!("get bms config");
+        request_with_retry!(
+            self,
+            BmsConfig,
+            &BmsConfig::request(Address::Host),
+            BmsConfig::reply_size()
+        )
+    }
+
+    /// Asynchronously retrieves the BMS real-time clock (`0x61`).
+    pub async fn get_rtc(&mut self) -> Result<Rtc> {
+        log::trace!("get rtc");
+        request_with_retry!(self, Rtc, &Rtc::request(Address::Host), Rtc::reply_size())
+    }
+
+    /// Asynchronously retrieves the software/master version string (`0x62`).
+    pub async fn get_software_version(&mut self) -> Result<SoftwareVersion> {
+        log::trace!("get software version");
+        request_with_retry!(
+            self,
+            SoftwareVersion,
+            &SoftwareVersion::request(Address::Host),
+            SoftwareVersion::reply_size()
+        )
+    }
+
+    /// Asynchronously retrieves the hardware version string (`0x63`).
+    pub async fn get_hardware_version(&mut self) -> Result<HardwareVersion> {
+        log::trace!("get hardware version");
+        request_with_retry!(
+            self,
+            HardwareVersion,
+            &HardwareVersion::request(Address::Host),
+            HardwareVersion::reply_size()
         )
     }
 

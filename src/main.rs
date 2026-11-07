@@ -106,6 +106,38 @@ fn main() -> Result<()> {
         commandline::CliCommands::Errors => print_info("Errors", || {
             bms.get_errors().with_context(|| "Cannot get errors")
         })?,
+        commandline::CliCommands::RatedCapacity => print_info("Rated capacity", || {
+            bms.get_rated_capacity()
+                .with_context(|| "Cannot get rated capacity")
+        })?,
+        commandline::CliCommands::BatteryInfo => print_info("Battery info", || {
+            bms.get_battery_info()
+                .with_context(|| "Cannot get battery info")
+        })?,
+        commandline::CliCommands::BatteryCode => print_info("Battery code", || {
+            bms.get_battery_code()
+                .with_context(|| "Cannot get battery code")
+        })?,
+        commandline::CliCommands::BatteryStat => print_info("Battery stat", || {
+            bms.get_battery_stat()
+                .with_context(|| "Cannot get battery stat")
+        })?,
+        commandline::CliCommands::BmsConfig => print_info("BMS config", || {
+            bms.get_bms_config()
+                .with_context(|| "Cannot get BMS config")
+        })?,
+        commandline::CliCommands::Rtc => print_info("RTC", || {
+            bms.get_rtc()
+                .with_context(|| "Cannot get RTC")
+        })?,
+        commandline::CliCommands::SoftwareVersion => print_info("Software version", || {
+            bms.get_software_version()
+                .with_context(|| "Cannot get software version")
+        })?,
+        commandline::CliCommands::HardwareVersion => print_info("Hardware version", || {
+            bms.get_hardware_version()
+                .with_context(|| "Cannot get hardware version")
+        })?,
         commandline::CliCommands::All => {
             print_info("Status", || {
                 bms.get_status().with_context(|| "Cannot get status")
@@ -137,6 +169,38 @@ fn main() -> Result<()> {
             })?;
             print_info("Errors", || {
                 bms.get_errors().with_context(|| "Cannot get errors")
+            })?;
+            print_info("Rated capacity", || {
+                bms.get_rated_capacity()
+                    .with_context(|| "Cannot get rated capacity")
+            })?;
+            print_info("Battery info", || {
+                bms.get_battery_info()
+                    .with_context(|| "Cannot get battery info")
+            })?;
+            print_info("Battery code", || {
+                bms.get_battery_code()
+                    .with_context(|| "Cannot get battery code")
+            })?;
+            print_info("Battery stat", || {
+                bms.get_battery_stat()
+                    .with_context(|| "Cannot get battery stat")
+            })?;
+            print_info("BMS config", || {
+                bms.get_bms_config()
+                    .with_context(|| "Cannot get BMS config")
+            })?;
+            print_info("RTC", || {
+                bms.get_rtc()
+                    .with_context(|| "Cannot get RTC")
+            })?;
+            print_info("Software version", || {
+                bms.get_software_version()
+                    .with_context(|| "Cannot get software version")
+            })?;
+            print_info("Hardware version", || {
+                bms.get_hardware_version()
+                    .with_context(|| "Cannot get hardware version")
             })?;
             print_info("SOC", || bms.get_soc().with_context(|| "Cannot get SOC"))?;
         }
@@ -225,6 +289,7 @@ mod tests {
                 do4: false,
             },
             cycles: 123,
+            mosfet_temperature: None,
         }
     }
 

@@ -85,11 +85,38 @@ pub const MINIMUM_DELAY: std::time::Duration = std::time::Duration::from_millis(
 /// The required length of a request sent to the BMS.
 const TX_BUFFER_LENGTH: usize = 13;
 /// The expected length of a standard response from the BMS.
-const RX_BUFFER_LENGTH: usize = 13;
+pub(crate) const RX_BUFFER_LENGTH: usize = 13;
 /// The start byte that begins every command.
-const START_BYTE: u8 = 0xa5;
+pub(crate) const START_BYTE: u8 = 0xa5;
 /// The length of the data payload in a standard command.
 const DATA_LENGTH: u8 = 0x08;
+/// Byte index of the address field within a frame.
+pub(crate) const ADDRESS_INDEX: usize = 1;
+/// Byte index of the command field within a frame.
+pub(crate) const COMMAND_INDEX: usize = 2;
+/// Address the BMS puts in its own replies (`A5 01 ..`). Host requests use
+/// [`Address::Host`]; frames from anything else on the bus — e.g. the request
+/// frames a Daly's on-board Bluetooth/UART module injects on the shared line —
+/// carry a different address and must not be read as our reply.
+pub(crate) const BMS_ADDRESS: u8 = 0x01;
+
+/// Upper bound on stray/foreign frames tolerated while resyncing to one reply,
+/// per expected frame. A bus flooded with another module's traffic fails the
+/// read (→ retry/reconnect) instead of looping forever.
+pub(crate) const MAX_STRAY_FRAMES_PER_FRAME: usize = 16;
+
+/// Whether `frame` is the BMS's own reply to the command we sent
+/// (`expected_cmd`), as opposed to foreign traffic on a shared serial bus — the
+/// request frames a Daly's on-board Bluetooth/UART module injects (`A5 40 ..`),
+/// or the BMS's answers to *those* for some other command (`A5 01 <other> ..`).
+/// `frame` is a full frame the caller has already synced to the `0xA5` start
+/// byte; only the address and command bytes are inspected (the checksum is
+/// validated later by the relevant `decode`).
+pub(crate) fn is_reply_for(frame: &[u8], expected_cmd: u8) -> bool {
+    frame.len() > COMMAND_INDEX
+        && frame[ADDRESS_INDEX] == BMS_ADDRESS
+        && frame[COMMAND_INDEX] == expected_cmd
+}
 
 /// Creates the basic structure of a request frame.
 ///
@@ -599,7 +626,10 @@ impl MosfetStatus {
             0 => MosfetMode::Stationary,
             1 => MosfetMode::Charging,
             2 => MosfetMode::Discharging,
-            _ => unreachable!(),
+            // A checksum-valid frame can still carry an out-of-range mode byte
+            // (line noise that happens to sum correctly). Fail as a normal read
+            // error so the caller reconnects, rather than panicking the task.
+            _ => return Err(Error::MalformedData),
         };
         Ok(Self {
             mode,
@@ -655,6 +685,9 @@ pub struct Status {
     pub states: IOState,
     /// Number of charge/discharge cycles.
     pub cycles: u16,
+    /// MOSFET/board temperature (°C), when the BMS reports it in byte 7 of the
+    /// 0x94 frame. Raw 0 = not reported; otherwise offset -40 like the cell temps.
+    pub mosfet_temperature: Option<i8>,
 }
 
 impl Status {
@@ -714,6 +747,7 @@ impl Status {
                 do4: read_bit!(rx_buffer[8], 7),
             },
             cycles: u16::from_be_bytes([rx_buffer[9], rx_buffer[10]]),
+            mosfet_temperature: (rx_buffer[11] != 0).then(|| ((rx_buffer[11] as i16) - 40) as i8),
         })
     }
 }
@@ -958,6 +992,443 @@ impl CellBalanceState {
         }
         Ok(result)
     }
+}
+
+/// Rated (design) capacity and nominal cell voltage (command `0x50`).
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct RatedCapacity {
+    /// Rated (design) pack capacity in Ampere-hours.
+    #[cfg_attr(feature = "serde", serde(serialize_with = "util::f32_3_digits"))]
+    pub rated_capacity_ah: f32,
+    /// Nominal voltage of a single cell in Volts.
+    #[cfg_attr(feature = "serde", serde(serialize_with = "util::f32_3_digits"))]
+    pub nominal_cell_voltage: f32,
+}
+
+impl RatedCapacity {
+    /// Command code of this request, echoed in the reply frames.
+    const COMMAND: u8 = 0x50;
+
+    /// Creates a request frame to read the rated capacity from the BMS.
+    ///
+    /// This is a low-level function. Users might prefer client methods.
+    pub fn request(address: Address) -> Vec<u8> {
+        let mut tx_buffer = create_request_header(address, Self::COMMAND);
+        calc_crc_and_set(&mut tx_buffer);
+        tx_buffer
+    }
+
+    /// Expected size of the reply frame for a rated-capacity request.
+    pub fn reply_size() -> usize {
+        RX_BUFFER_LENGTH
+    }
+
+    /// Decodes the rated-capacity data from a response frame.
+    ///
+    /// Both values are transmitted as big-endian `u32` in milli-units (mAh / mV).
+    ///
+    /// This is a low-level function. Users might prefer client methods.
+    pub fn decode(rx_buffer: &[u8]) -> std::result::Result<Self, Error> {
+        validate_len(rx_buffer, Self::reply_size())?;
+        validate_frame_header(rx_buffer, Self::COMMAND)?;
+        validate_checksum(rx_buffer)?;
+        Ok(Self {
+            rated_capacity_ah: u32::from_be_bytes([
+                rx_buffer[4],
+                rx_buffer[5],
+                rx_buffer[6],
+                rx_buffer[7],
+            ]) as f32
+                / 1000.0,
+            nominal_cell_voltage: u32::from_be_bytes([
+                rx_buffer[8],
+                rx_buffer[9],
+                rx_buffer[10],
+                rx_buffer[11],
+            ]) as f32
+                / 1000.0,
+        })
+    }
+}
+
+/// Battery information: production date, operating mode, type and auto-sleep
+/// (command `0x53`).
+///
+/// The production date is the well-corroborated part (dbus-serialbattery uses it
+/// to build its hardware string). `operation_mode` / `battery_type` /
+/// `auto_sleep_minutes` are exposed as raw values pending on-device confirmation
+/// of their enumerations, so no meaning is asserted on them here.
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct BatteryInfo {
+    /// Raw operating-mode byte (enumeration unverified).
+    pub operation_mode: u8,
+    /// Raw battery-type / chemistry byte (enumeration unverified).
+    pub battery_type: u8,
+    /// Production year (full year, e.g. `2024`).
+    pub production_year: u16,
+    /// Production month (1-12).
+    pub production_month: u8,
+    /// Production day (1-31).
+    pub production_day: u8,
+    /// Automatic sleep timeout in minutes (×60 for seconds; unverified).
+    pub auto_sleep_minutes: u8,
+}
+
+impl BatteryInfo {
+    /// Command code of this request, echoed in the reply frames.
+    const COMMAND: u8 = 0x53;
+
+    /// Creates a request frame to read the battery info from the BMS.
+    ///
+    /// This is a low-level function. Users might prefer client methods.
+    pub fn request(address: Address) -> Vec<u8> {
+        let mut tx_buffer = create_request_header(address, Self::COMMAND);
+        calc_crc_and_set(&mut tx_buffer);
+        tx_buffer
+    }
+
+    /// Expected size of the reply frame for a battery-info request.
+    pub fn reply_size() -> usize {
+        RX_BUFFER_LENGTH
+    }
+
+    /// Decodes the battery-info data from a response frame.
+    ///
+    /// This is a low-level function. Users might prefer client methods.
+    pub fn decode(rx_buffer: &[u8]) -> std::result::Result<Self, Error> {
+        validate_len(rx_buffer, Self::reply_size())?;
+        validate_frame_header(rx_buffer, Self::COMMAND)?;
+        validate_checksum(rx_buffer)?;
+        Ok(Self {
+            operation_mode: rx_buffer[4],
+            battery_type: rx_buffer[5],
+            production_year: rx_buffer[6] as u16 + 2000,
+            production_month: rx_buffer[7],
+            production_day: rx_buffer[8],
+            auto_sleep_minutes: rx_buffer[9],
+        })
+    }
+}
+
+/// Battery code / serial string (command `0x57`).
+///
+/// The BMS returns the code across a fixed set of 5 frames, 7 ASCII chars each.
+/// Dereferences to `&str`.
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct BatteryCode(String);
+
+impl BatteryCode {
+    /// Command code of this request, echoed in the reply frames.
+    const COMMAND: u8 = 0x57;
+    /// Number of frames the battery-code reply always spans.
+    const N_FRAMES: usize = 5;
+
+    /// Creates a request frame to read the battery code from the BMS.
+    ///
+    /// This is a low-level function. Users might prefer client methods.
+    pub fn request(address: Address) -> Vec<u8> {
+        let mut tx_buffer = create_request_header(address, Self::COMMAND);
+        calc_crc_and_set(&mut tx_buffer);
+        tx_buffer
+    }
+
+    /// Expected size of the (fixed 5-frame) reply.
+    pub fn reply_size() -> usize {
+        Self::N_FRAMES * RX_BUFFER_LENGTH
+    }
+
+    /// Decodes the battery code from the concatenated 5-frame response.
+    ///
+    /// Frame ordering is validated leniently — a mismatch is logged, not fatal —
+    /// because the code is a cosmetic identifier and the frame-index base differs
+    /// between Daly variants. NUL padding is replaced with spaces and collapsed.
+    ///
+    /// This is a low-level function. Users might prefer client methods.
+    pub fn decode(rx_buffer: &[u8]) -> std::result::Result<Self, Error> {
+        validate_len(rx_buffer, Self::reply_size())?;
+        let mut bytes = Vec::with_capacity(Self::N_FRAMES * 7);
+        for n_frame in 1..=Self::N_FRAMES {
+            let part =
+                &rx_buffer[((n_frame - 1) * RX_BUFFER_LENGTH)..(n_frame * RX_BUFFER_LENGTH)];
+            validate_frame_header(part, Self::COMMAND)?;
+            validate_checksum(part)?;
+            if n_frame != usize::from(part[4]) {
+                log::warn!(
+                    "Battery-code frame out of order - expected={} received={}",
+                    n_frame,
+                    part[4]
+                );
+            }
+            bytes.extend_from_slice(&part[5..12]);
+        }
+        let code = String::from_utf8_lossy(&bytes)
+            .replace('\0', " ")
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        Ok(Self(code))
+    }
+}
+
+impl std::ops::Deref for BatteryCode {
+    type Target = str;
+
+    fn deref(&self) -> &str {
+        &self.0
+    }
+}
+
+/// Lifetime accumulated charge / discharge amp-hours (command `0x52`).
+///
+/// Running totals since the counters were last cleared, big-endian `u32` in whole
+/// amp-hours. A large asymmetry (discharge ≫ charge) is a footprint of SoC resets
+/// done while not truly full — each hands the counter phantom capacity that later
+/// leaves on the discharge side — or of a current-measurement bias; useful for
+/// diagnosing SoC drift.
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct BatteryStat {
+    /// Lifetime accumulated charge (Ah).
+    pub total_charge_ah: u32,
+    /// Lifetime accumulated discharge (Ah).
+    pub total_discharge_ah: u32,
+}
+
+impl BatteryStat {
+    /// Command code of this request, echoed in the reply frames.
+    const COMMAND: u8 = 0x52;
+
+    /// Creates a request frame to read the lifetime charge/discharge totals.
+    pub fn request(address: Address) -> Vec<u8> {
+        let mut tx_buffer = create_request_header(address, Self::COMMAND);
+        calc_crc_and_set(&mut tx_buffer);
+        tx_buffer
+    }
+
+    /// Expected size of the reply frame.
+    pub fn reply_size() -> usize {
+        RX_BUFFER_LENGTH
+    }
+
+    /// Decodes the lifetime charge/discharge totals from a response frame.
+    pub fn decode(rx_buffer: &[u8]) -> std::result::Result<Self, Error> {
+        validate_len(rx_buffer, Self::reply_size())?;
+        validate_frame_header(rx_buffer, Self::COMMAND)?;
+        validate_checksum(rx_buffer)?;
+        Ok(Self {
+            total_charge_ah: u32::from_be_bytes([
+                rx_buffer[4],
+                rx_buffer[5],
+                rx_buffer[6],
+                rx_buffer[7],
+            ]),
+            total_discharge_ah: u32::from_be_bytes([
+                rx_buffer[8],
+                rx_buffer[9],
+                rx_buffer[10],
+                rx_buffer[11],
+            ]),
+        })
+    }
+}
+
+/// BMS hardware configuration: board number and cell / temperature-sensor counts
+/// (command `0x51`). The Daly reports up-to-3 parallel strings (`8,0,0` / `2,0,0`
+/// for a single 8S string with 2 NTCs); `cells`/`temperature_sensors` are the first
+/// (primary) string's counts.
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct BmsConfig {
+    /// Board (slave) number.
+    pub board: u8,
+    /// Number of series cells (primary string).
+    pub cells: u8,
+    /// Number of temperature sensors / NTCs (primary string).
+    pub temperature_sensors: u8,
+}
+
+impl BmsConfig {
+    /// Command code of this request, echoed in the reply frames.
+    const COMMAND: u8 = 0x51;
+
+    /// Creates a request frame to read the BMS config.
+    pub fn request(address: Address) -> Vec<u8> {
+        let mut tx_buffer = create_request_header(address, Self::COMMAND);
+        calc_crc_and_set(&mut tx_buffer);
+        tx_buffer
+    }
+
+    /// Expected size of the reply frame.
+    pub fn reply_size() -> usize {
+        RX_BUFFER_LENGTH
+    }
+
+    /// Decodes the BMS config from a response frame.
+    pub fn decode(rx_buffer: &[u8]) -> std::result::Result<Self, Error> {
+        validate_len(rx_buffer, Self::reply_size())?;
+        validate_frame_header(rx_buffer, Self::COMMAND)?;
+        validate_checksum(rx_buffer)?;
+        Ok(Self {
+            board: rx_buffer[4],
+            cells: rx_buffer[5],
+            temperature_sensors: rx_buffer[8],
+        })
+    }
+}
+
+/// BMS real-time clock (command `0x61`). Each field is a raw byte value; `year` is
+/// the two-digit year plus 2000.
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct Rtc {
+    /// Full year (e.g. 2026).
+    pub year: u16,
+    /// Month (1-12).
+    pub month: u8,
+    /// Day (1-31).
+    pub day: u8,
+    /// Hour (0-23).
+    pub hour: u8,
+    /// Minute (0-59).
+    pub minute: u8,
+    /// Second (0-59).
+    pub second: u8,
+}
+
+impl Rtc {
+    /// Command code of this request, echoed in the reply frames.
+    const COMMAND: u8 = 0x61;
+
+    /// Creates a request frame to read the BMS real-time clock.
+    pub fn request(address: Address) -> Vec<u8> {
+        let mut tx_buffer = create_request_header(address, Self::COMMAND);
+        calc_crc_and_set(&mut tx_buffer);
+        tx_buffer
+    }
+
+    /// Expected size of the reply frame.
+    pub fn reply_size() -> usize {
+        RX_BUFFER_LENGTH
+    }
+
+    /// Decodes the real-time clock from a response frame.
+    pub fn decode(rx_buffer: &[u8]) -> std::result::Result<Self, Error> {
+        validate_len(rx_buffer, Self::reply_size())?;
+        validate_frame_header(rx_buffer, Self::COMMAND)?;
+        validate_checksum(rx_buffer)?;
+        Ok(Self {
+            year: rx_buffer[4] as u16 + 2000,
+            month: rx_buffer[5],
+            day: rx_buffer[6],
+            hour: rx_buffer[7],
+            minute: rx_buffer[8],
+            second: rx_buffer[9],
+        })
+    }
+}
+
+/// BMS software / master version string (command `0x62`), e.g. `"12_250520_BRST"`.
+/// Returned across a fixed 2 frames of 7 ASCII chars each. Dereferences to `&str`.
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct SoftwareVersion(String);
+
+impl SoftwareVersion {
+    /// Command code of this request, echoed in the reply frames.
+    const COMMAND: u8 = 0x62;
+    /// Number of frames the reply always spans.
+    const N_FRAMES: usize = 2;
+
+    /// Creates a request frame to read the software/master version.
+    pub fn request(address: Address) -> Vec<u8> {
+        let mut tx_buffer = create_request_header(address, Self::COMMAND);
+        calc_crc_and_set(&mut tx_buffer);
+        tx_buffer
+    }
+
+    /// Expected size of the (fixed 2-frame) reply.
+    pub fn reply_size() -> usize {
+        Self::N_FRAMES * RX_BUFFER_LENGTH
+    }
+
+    /// Decodes the version string from the concatenated multi-frame response
+    /// (7 ASCII chars per frame, NUL padding trimmed). Frame ordering is lenient.
+    pub fn decode(rx_buffer: &[u8]) -> std::result::Result<Self, Error> {
+        Ok(Self(decode_ascii_frames(rx_buffer, Self::COMMAND, Self::N_FRAMES)?))
+    }
+}
+
+impl std::ops::Deref for SoftwareVersion {
+    type Target = str;
+
+    fn deref(&self) -> &str {
+        &self.0
+    }
+}
+
+/// BMS hardware version string (command `0x63`), e.g. `"H2.1_103E_30XF"`.
+/// Returned across a fixed 2 frames of 7 ASCII chars each. Dereferences to `&str`.
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct HardwareVersion(String);
+
+impl HardwareVersion {
+    /// Command code of this request, echoed in the reply frames.
+    const COMMAND: u8 = 0x63;
+    /// Number of frames the reply always spans.
+    const N_FRAMES: usize = 2;
+
+    /// Creates a request frame to read the hardware version.
+    pub fn request(address: Address) -> Vec<u8> {
+        let mut tx_buffer = create_request_header(address, Self::COMMAND);
+        calc_crc_and_set(&mut tx_buffer);
+        tx_buffer
+    }
+
+    /// Expected size of the (fixed 2-frame) reply.
+    pub fn reply_size() -> usize {
+        Self::N_FRAMES * RX_BUFFER_LENGTH
+    }
+
+    /// Decodes the version string from the concatenated multi-frame response.
+    pub fn decode(rx_buffer: &[u8]) -> std::result::Result<Self, Error> {
+        Ok(Self(decode_ascii_frames(rx_buffer, Self::COMMAND, Self::N_FRAMES)?))
+    }
+}
+
+impl std::ops::Deref for HardwareVersion {
+    type Target = str;
+
+    fn deref(&self) -> &str {
+        &self.0
+    }
+}
+
+/// Decode `n_frames` of a multi-frame ASCII reply (7 chars each at byte 5..12),
+/// validating each frame's checksum, trimming NUL padding and collapsing whitespace.
+/// Frame ordering is checked leniently (logged, not fatal) — the frame-index base
+/// differs between Daly variants. Shared by [`SoftwareVersion`] / [`HardwareVersion`]
+/// (see also [`BatteryCode`], which predates this helper).
+fn decode_ascii_frames(rx_buffer: &[u8], command: u8, n_frames: usize) -> std::result::Result<String, Error> {
+    validate_len(rx_buffer, n_frames * RX_BUFFER_LENGTH)?;
+    let mut bytes = Vec::with_capacity(n_frames * 7);
+    for n_frame in 1..=n_frames {
+        let part = &rx_buffer[((n_frame - 1) * RX_BUFFER_LENGTH)..(n_frame * RX_BUFFER_LENGTH)];
+        validate_frame_header(part, command)?;
+        validate_checksum(part)?;
+        if n_frame != usize::from(part[4]) {
+            log::warn!("ASCII frame out of order - expected={} received={}", n_frame, part[4]);
+        }
+        bytes.extend_from_slice(&part[5..12]);
+    }
+    Ok(String::from_utf8_lossy(&bytes)
+        .replace('\0', " ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" "))
 }
 
 /// Represents various error codes and alarm states reported by the BMS.
@@ -1439,6 +1910,67 @@ impl BmsReset {
 mod tests {
     use super::*;
 
+    #[test]
+    fn is_reply_for_accepts_only_bms_reply_to_our_command() {
+        // Genuine BMS SOC reply (addr 0x01, cmd 0x90) — the frame we asked for.
+        let soc_reply = [0xA5, 0x01, 0x90, 0x08, 0x01, 0x0D, 0, 0, 0x75, 0x11, 0x03, 0xE2, 0xB7];
+        assert!(is_reply_for(&soc_reply, 0x90));
+        // Stray request from the on-board BT/UART module on the shared bus (host
+        // address 0x40) — must be skipped even though it's well-formed.
+        let stray_bt = [0xA5, 0x40, 0x97, 0x08, 0, 0, 0, 0, 0, 0, 0, 0, 0x84];
+        assert!(!is_reply_for(&stray_bt, 0x90));
+        // The BMS answering the BT module's request for a DIFFERENT command
+        // (addr 0x01 but cmd 0x91) — right address, wrong command, so not ours.
+        let other_reply = [0xA5, 0x01, 0x91, 0x08, 0, 0, 0, 0, 0, 0, 0, 0, 0x9E];
+        assert!(!is_reply_for(&other_reply, 0x90));
+        // A buffer too short to even carry a command byte is never our reply.
+        assert!(!is_reply_for(&[0xA5, 0x01], 0x90));
+    }
+
+    // The following fixtures are real frames captured off a Daly DL_HKMS_3.1.L (8S).
+
+    #[test]
+    fn battery_stat_decodes_lifetime_ah() {
+        // 0x52: charged 2119 Ah, discharged 3144 Ah (two big-endian u32).
+        let f = [0xA5, 0x01, 0x52, 0x08, 0x00, 0x00, 0x08, 0x47, 0x00, 0x00, 0x0C, 0x48, 0xA3];
+        let s = BatteryStat::decode(&f).unwrap();
+        assert_eq!(s.total_charge_ah, 2119);
+        assert_eq!(s.total_discharge_ah, 3144);
+    }
+
+    #[test]
+    fn bms_config_decodes_board_cells_ntc() {
+        // 0x51: board 1, 8 cells, 2 NTC.
+        let f = [0xA5, 0x01, 0x51, 0x08, 0x01, 0x08, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x0A];
+        let c = BmsConfig::decode(&f).unwrap();
+        assert_eq!((c.board, c.cells, c.temperature_sensors), (1, 8, 2));
+    }
+
+    #[test]
+    fn rtc_decodes_datetime() {
+        // 0x61: 2026-07-29 19:32:24.
+        let f = [0xA5, 0x01, 0x61, 0x08, 0x1A, 0x07, 0x1D, 0x13, 0x20, 0x18, 0x00, 0x00, 0x98];
+        let r = Rtc::decode(&f).unwrap();
+        assert_eq!((r.year, r.month, r.day), (2026, 7, 29));
+        assert_eq!((r.hour, r.minute, r.second), (19, 32, 24));
+    }
+
+    #[test]
+    fn version_strings_decode_from_two_frames() {
+        // 0x62 software/master version → "12_250520_BRST".
+        let sw = [
+            0xA5, 0x01, 0x62, 0x08, 0x01, 0x31, 0x32, 0x5F, 0x32, 0x35, 0x30, 0x35, 0x9F, //
+            0xA5, 0x01, 0x62, 0x08, 0x02, 0x32, 0x30, 0x5F, 0x42, 0x52, 0x53, 0x54, 0x0E,
+        ];
+        assert_eq!(&*SoftwareVersion::decode(&sw).unwrap(), "12_250520_BRST");
+        // 0x63 hardware version → "H2.1_103E_30XF".
+        let hw = [
+            0xA5, 0x01, 0x63, 0x08, 0x01, 0x48, 0x32, 0x2E, 0x31, 0x5F, 0x31, 0x30, 0xAB, //
+            0xA5, 0x01, 0x63, 0x08, 0x02, 0x33, 0x45, 0x5F, 0x33, 0x30, 0x58, 0x46, 0xEB,
+        ];
+        assert_eq!(&*HardwareVersion::decode(&hw).unwrap(), "H2.1_103E_30XF");
+    }
+
     // Helper function to calculate checksum for test data
     fn calculate_test_checksum(data: &[u8]) -> u8 {
         let mut checksum: u8 = 0;
@@ -1517,6 +2049,7 @@ mod tests {
                 do4: true,  // bit 7 of 0xAA
             },
             cycles: 1234,
+            mosfet_temperature: None,
         };
         match Status::decode(&bytes) {
             Ok(decoded) => {
@@ -1568,6 +2101,17 @@ mod tests {
             }
             Err(e) => panic!("Decoding failed: {:?}", e),
         }
+    }
+
+    #[test]
+    fn test_status_decode_reads_mosfet_temperature() {
+        // Byte 7 (rx_buffer[11]) = 0x4D -> MOSFET temp 77 - 40 = 37 C.
+        // CRC: 790 (base) - 0x00 + 0x4D = 867 = 0x0363 -> 0x63.
+        let bytes: [u8; 13] = [
+            0xA5, 0x40, 0x94, 0x08, 0x10, 0x04, 0x01, 0x00, 0xAA, 0x04, 0xD2, 0x4D, 0x63,
+        ];
+        let s = Status::decode(&bytes).expect("decode");
+        assert_eq!(s.mosfet_temperature, Some(37));
     }
 
     #[test]
@@ -2065,7 +2609,7 @@ mod tests {
         assert_eq!(BmsReset::request(Address::Host), expected_frame);
     }
 
-    // Reply frames captured from a Daly active balancer
+// Reply frames captured from a Daly active balancer
     const STATUS_FRAME: [u8; 13] = [
         0xA5, 0x01, 0x94, 0x08, 0x14, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x49, 0xA0,
     ];
@@ -2154,5 +2698,105 @@ mod tests {
         let mut reader = FrameReader::new(&Status::request(Address::Host), Status::reply_size());
         let garbage = [0x00; MAX_DISCARDED_BYTES + 1];
         assert_eq!(reader.push(&garbage), Err(Error::UnexpectedFrame));
+    }
+
+    #[test]
+    fn test_rated_capacity_request() {
+        // CMD = 0x50; CRC = 0xA5+0x40+0x50+0x08 = 317 = 0x013D => 0x3D
+        let expected_frame: [u8; 13] = [
+            0xA5, 0x40, 0x50, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x3D,
+        ];
+        assert_eq!(RatedCapacity::request(Address::Host), expected_frame);
+    }
+
+    #[test]
+    fn test_rated_capacity_decode_valid() {
+        // rated capacity = 100.000 Ah (100000 mAh = 0x000186A0),
+        // nominal cell voltage = 3.200 V (3200 mV = 0x00000C80).
+        // CRC: 0xA5+0x40+0x50+0x08+0x00+0x01+0x86+0xA0+0x00+0x00+0x0C+0x80 = 752 = 0x02F0 => 0xF0
+        let bytes: [u8; 13] = [
+            0xA5, 0x40, 0x50, 0x08, 0x00, 0x01, 0x86, 0xA0, 0x00, 0x00, 0x0C, 0x80, 0xF0,
+        ];
+        match RatedCapacity::decode(&bytes) {
+            Ok(decoded) => {
+                assert_eq!(decoded.rated_capacity_ah, 100.0);
+                assert_eq!(decoded.nominal_cell_voltage, 3.2);
+            }
+            Err(e) => panic!("Decoding failed: {:?}", e),
+        }
+    }
+
+    #[test]
+    fn test_battery_info_request() {
+        // CMD = 0x53; CRC = 0xA5+0x40+0x53+0x08 = 320 = 0x0140 => 0x40
+        let expected_frame: [u8; 13] = [
+            0xA5, 0x40, 0x53, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40,
+        ];
+        assert_eq!(BatteryInfo::request(Address::Host), expected_frame);
+    }
+
+    #[test]
+    fn test_battery_info_decode_valid() {
+        // mode = 0, type = 0, production 2024-06-15 (year 0x18=24 (+2000), month 0x06, day 0x0F),
+        // auto sleep = 30 min (0x1E).
+        // CRC: 0xA5+0x40+0x53+0x08+0x00+0x00+0x18+0x06+0x0F+0x1E+0x00+0x00 = 395 = 0x018B => 0x8B
+        let bytes: [u8; 13] = [
+            0xA5, 0x40, 0x53, 0x08, 0x00, 0x00, 0x18, 0x06, 0x0F, 0x1E, 0x00, 0x00, 0x8B,
+        ];
+        match BatteryInfo::decode(&bytes) {
+            Ok(decoded) => {
+                assert_eq!(decoded.production_year, 2024);
+                assert_eq!(decoded.production_month, 6);
+                assert_eq!(decoded.production_day, 15);
+                assert_eq!(decoded.auto_sleep_minutes, 30);
+                assert_eq!(decoded.operation_mode, 0);
+                assert_eq!(decoded.battery_type, 0);
+            }
+            Err(e) => panic!("Decoding failed: {:?}", e),
+        }
+    }
+
+    #[test]
+    fn test_battery_code_request() {
+        // CMD = 0x57; CRC = 0xA5+0x40+0x57+0x08 = 324 = 0x0144 => 0x44
+        let expected_frame: [u8; 13] = [
+            0xA5, 0x40, 0x57, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x44,
+        ];
+        assert_eq!(BatteryCode::request(Address::Host), expected_frame);
+    }
+
+    #[test]
+    fn test_battery_code_decode_valid() {
+        // 5 frames, 1-based index, 7 ASCII chars each; trailing NULs trimmed.
+        // Code: "DL240601ABCD1234567890XYZ98765432".
+        let bytes: [u8; 65] = [
+            0xA5, 0x40, 0x57, 0x08, 0x01, 0x44, 0x4C, 0x32, 0x34, 0x30, 0x36, 0x30, 0xD1,
+            0xA5, 0x40, 0x57, 0x08, 0x02, 0x31, 0x41, 0x42, 0x43, 0x44, 0x31, 0x32, 0xE4,
+            0xA5, 0x40, 0x57, 0x08, 0x03, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0xC1,
+            0xA5, 0x40, 0x57, 0x08, 0x04, 0x30, 0x58, 0x59, 0x5A, 0x39, 0x38, 0x37, 0x2B,
+            0xA5, 0x40, 0x57, 0x08, 0x05, 0x36, 0x35, 0x34, 0x33, 0x32, 0x00, 0x00, 0x4D,
+        ];
+        match BatteryCode::decode(&bytes) {
+            Ok(decoded) => assert_eq!(&*decoded, "DL240601ABCD1234567890XYZ98765432"),
+            Err(e) => panic!("Decoding failed: {:?}", e),
+        }
+    }
+
+    #[test]
+    fn test_battery_code_decode_tolerates_wrong_frame_index() {
+        // First frame's index byte forged to 0x05 (instead of 1) with a matching
+        // CRC (0xD1 + 4 = 0xD5). Decode must warn-not-fail and still yield the
+        // string in buffer order — the index base differs between Daly variants.
+        let bytes: [u8; 65] = [
+            0xA5, 0x40, 0x57, 0x08, 0x05, 0x44, 0x4C, 0x32, 0x34, 0x30, 0x36, 0x30, 0xD5,
+            0xA5, 0x40, 0x57, 0x08, 0x02, 0x31, 0x41, 0x42, 0x43, 0x44, 0x31, 0x32, 0xE4,
+            0xA5, 0x40, 0x57, 0x08, 0x03, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0xC1,
+            0xA5, 0x40, 0x57, 0x08, 0x04, 0x30, 0x58, 0x59, 0x5A, 0x39, 0x38, 0x37, 0x2B,
+            0xA5, 0x40, 0x57, 0x08, 0x05, 0x36, 0x35, 0x34, 0x33, 0x32, 0x00, 0x00, 0x4D,
+        ];
+        match BatteryCode::decode(&bytes) {
+            Ok(decoded) => assert_eq!(&*decoded, "DL240601ABCD1234567890XYZ98765432"),
+            Err(e) => panic!("Decoding should tolerate index mismatch: {:?}", e),
+        }
     }
 }

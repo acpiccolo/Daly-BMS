@@ -31,6 +31,22 @@ pub enum CliCommands {
     Balancing,
     /// Show current BMS error codes
     Errors,
+    /// Show rated (design) capacity and nominal cell voltage
+    RatedCapacity,
+    /// Show battery info: production date plus raw mode/type/auto-sleep bytes
+    BatteryInfo,
+    /// Show the battery code / serial string
+    BatteryCode,
+    /// Show lifetime accumulated charge/discharge Ah
+    BatteryStat,
+    /// Show BMS configuration: board number and cell / NTC counts
+    BmsConfig,
+    /// Show BMS real-time clock
+    Rtc,
+    /// Show BMS software / master version string
+    SoftwareVersion,
+    /// Show BMS hardware version string
+    HardwareVersion,
     /// Show all available BMS information by running most read commands
     All,
     /// Set State of Charge (SOC) in percent

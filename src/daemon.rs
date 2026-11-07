@@ -18,6 +18,14 @@ enum FetchedData {
     CellTemperatures(Vec<i32>),
     Balancing(Vec<bool>),
     Errors(Vec<protocol::ErrorCode>),
+    RatedCapacity(protocol::RatedCapacity),
+    BatteryInfo(protocol::BatteryInfo),
+    BatteryCode(protocol::BatteryCode),
+    BatteryStat(protocol::BatteryStat),
+    BmsConfig(protocol::BmsConfig),
+    Rtc(protocol::Rtc),
+    SoftwareVersion(protocol::SoftwareVersion),
+    HardwareVersion(protocol::HardwareVersion),
 }
 
 impl FetchedData {
@@ -32,6 +40,14 @@ impl FetchedData {
             FetchedData::CellTemperatures(s) => serde_json::to_value(s).map_err(Into::into),
             FetchedData::Balancing(s) => serde_json::to_value(s).map_err(Into::into),
             FetchedData::Errors(s) => serde_json::to_value(s).map_err(Into::into),
+            FetchedData::RatedCapacity(s) => serde_json::to_value(s).map_err(Into::into),
+            FetchedData::BatteryInfo(s) => serde_json::to_value(s).map_err(Into::into),
+            FetchedData::BatteryCode(s) => serde_json::to_value(s.to_string()).map_err(Into::into),
+            FetchedData::BatteryStat(s) => serde_json::to_value(s).map_err(Into::into),
+            FetchedData::BmsConfig(s) => serde_json::to_value(s).map_err(Into::into),
+            FetchedData::Rtc(s) => serde_json::to_value(s).map_err(Into::into),
+            FetchedData::SoftwareVersion(s) => serde_json::to_value(s.to_string()).map_err(Into::into),
+            FetchedData::HardwareVersion(s) => serde_json::to_value(s.to_string()).map_err(Into::into),
         }
     }
 
@@ -46,6 +62,14 @@ impl FetchedData {
             FetchedData::CellTemperatures(s) => format!("{s:?}"),
             FetchedData::Balancing(s) => format!("{s:?}"),
             FetchedData::Errors(s) => format!("{s:?}"),
+            FetchedData::RatedCapacity(s) => format!("{s:?}"),
+            FetchedData::BatteryInfo(s) => format!("{s:?}"),
+            FetchedData::BatteryCode(s) => format!("{s:?}"),
+            FetchedData::BatteryStat(s) => format!("{s:?}"),
+            FetchedData::BmsConfig(s) => format!("{s:?}"),
+            FetchedData::Rtc(s) => format!("{s:?}"),
+            FetchedData::SoftwareVersion(s) => format!("{s:?}"),
+            FetchedData::HardwareVersion(s) => format!("{s:?}"),
         }
     }
 }
@@ -131,6 +155,62 @@ fn get_metrics<'a>() -> HashMap<&'a str, Metric<'a>> {
         "errors",
         Metric {
             fetch: Box::new(|bms| Ok(bms.get_errors().map(FetchedData::Errors)?)),
+            dependencies: &[],
+        },
+    );
+    metrics.insert(
+        "rated-capacity",
+        Metric {
+            fetch: Box::new(|bms| Ok(bms.get_rated_capacity().map(FetchedData::RatedCapacity)?)),
+            dependencies: &[],
+        },
+    );
+    metrics.insert(
+        "battery-info",
+        Metric {
+            fetch: Box::new(|bms| Ok(bms.get_battery_info().map(FetchedData::BatteryInfo)?)),
+            dependencies: &[],
+        },
+    );
+    metrics.insert(
+        "battery-code",
+        Metric {
+            fetch: Box::new(|bms| Ok(bms.get_battery_code().map(FetchedData::BatteryCode)?)),
+            dependencies: &[],
+        },
+    );
+    metrics.insert(
+        "battery-stat",
+        Metric {
+            fetch: Box::new(|bms| Ok(bms.get_battery_stat().map(FetchedData::BatteryStat)?)),
+            dependencies: &[],
+        },
+    );
+    metrics.insert(
+        "bms-config",
+        Metric {
+            fetch: Box::new(|bms| Ok(bms.get_bms_config().map(FetchedData::BmsConfig)?)),
+            dependencies: &[],
+        },
+    );
+    metrics.insert(
+        "rtc",
+        Metric {
+            fetch: Box::new(|bms| Ok(bms.get_rtc().map(FetchedData::Rtc)?)),
+            dependencies: &[],
+        },
+    );
+    metrics.insert(
+        "software-version",
+        Metric {
+            fetch: Box::new(|bms| Ok(bms.get_software_version().map(FetchedData::SoftwareVersion)?)),
+            dependencies: &[],
+        },
+    );
+    metrics.insert(
+        "hardware-version",
+        Metric {
+            fetch: Box::new(|bms| Ok(bms.get_hardware_version().map(FetchedData::HardwareVersion)?)),
             dependencies: &[],
         },
     );

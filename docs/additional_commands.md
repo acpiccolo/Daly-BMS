@@ -1,33 +1,24 @@
-# Daly BMS Additional Communication Commands & Byte Layouts
+# Implemented Additional Commands Specification
 
-> **Disclaimer:** The commands and byte structures documented in this specification have been aggregated from various open-source projects, community reverse-engineering efforts, and manufacturer documentation. Some commands may vary across different Daly BMS hardware revisions and firmware versions (e.g., standard UART V1.2 vs. DL_HKMS firmware series) and may not be fully verified on all hardware models.
+This document details the newly added and implemented Daly BMS protocol commands that extend beyond the standard `0x90`–`0x98` status/measurement queries.
+
+All commands documented here are fully implemented in `dalybms_lib` (both synchronous and asynchronous clients), integrated into the CLI, and monitored in the daemon.
 
 ---
 
-## Command Overview Table
+## Command Overview
 
-| CMD | Description | Tested / Verification | Primary Source / Reference & Repository URL |
-|---|---|---|---|
-| `0x01` | System Sleep / Deep Power Down | Not Tested | [Daly Upper Computer Protocol Spec](https://github.com/acpiccolo/Daly-BMS/blob/main/docs/Daly%20UART_485%20Communications%20Protocol%20V1.2.pdf) |
-| `0x02` | MCU Wakeup Command | Not Tested | [Daly Upper Computer Protocol Spec](https://github.com/acpiccolo/Daly-BMS/blob/main/docs/Daly%20UART_485%20Communications%20Protocol%20V1.2.pdf) |
-| `0x10` / `0x20` | Cell Overvoltage Protection Threshold | Not Tested | [Daly UART Protocol V1.2 (Sec. 4)](https://github.com/acpiccolo/Daly-BMS/blob/main/docs/Daly%20UART_485%20Communications%20Protocol%20V1.2.pdf#L1) |
-| `0x11` / `0x21` | Cell Undervoltage Protection Threshold | Not Tested | [Daly UART Protocol V1.2 (Sec. 4)](https://github.com/acpiccolo/Daly-BMS/blob/main/docs/Daly%20UART_485%20Communications%20Protocol%20V1.2.pdf#L1) |
-| `0x12` / `0x22` | Pack / Sum Overvoltage Threshold | Not Tested | [Daly UART Protocol V1.2 (Sec. 4)](https://github.com/acpiccolo/Daly-BMS/blob/main/docs/Daly%20UART_485%20Communications%20Protocol%20V1.2.pdf#L1) |
-| `0x13` / `0x23` | Pack / Sum Undervoltage Threshold | Not Tested | [Daly UART Protocol V1.2 (Sec. 4)](https://github.com/acpiccolo/Daly-BMS/blob/main/docs/Daly%20UART_485%20Communications%20Protocol%20V1.2.pdf#L1) |
-| `0x14` / `0x24` | Charge Overcurrent Protection Threshold | Not Tested | [Daly UART Protocol V1.2 (Sec. 4)](https://github.com/acpiccolo/Daly-BMS/blob/main/docs/Daly%20UART_485%20Communications%20Protocol%20V1.2.pdf#L1) |
-| `0x15` / `0x25` | Discharge Overcurrent Protection Threshold | Not Tested | [Daly UART Protocol V1.2 (Sec. 4)](https://github.com/acpiccolo/Daly-BMS/blob/main/docs/Daly%20UART_485%20Communications%20Protocol%20V1.2.pdf#L1) |
-| `0x16` / `0x26` | Balance Start Voltage & Delta | Not Tested | [Daly UART Protocol V1.2 (Sec. 4)](https://github.com/acpiccolo/Daly-BMS/blob/main/docs/Daly%20UART_485%20Communications%20Protocol%20V1.2.pdf#L1) |
-| `0x2F` | Set Nominal Pack Capacity (Ah) | Not Tested | [VenusOS dbus-serialbattery (`daly.py`)](https://github.com/Louisvdw/dbus-serialbattery/blob/master/etc/dbus-serialbattery/bms/daly.py#L180-L200) |
-| `0x50` | RTC Time (Legacy) / Rated Capacity (DL_HKMS) | Not Tested | [dignifiedquire/Daly-BMS (`daly_bms.rs`)](https://github.com/dignifiedquire/Daly-BMS/blob/feat/rated-capacity-battery-info-code/src/daly_bms.rs#L410-L425) |
-| `0x51` | Hardware & Firmware Info / Board Config | Not Tested | [dignifiedquire/Daly-BMS (`daly_bms.rs`)](https://github.com/dignifiedquire/Daly-BMS/blob/feat/rated-capacity-battery-info-code/src/daly_bms.rs#L430-L450) |
-| `0x52` | Serial Number (Legacy) / Lifetime Accumulated Ah (DL_HKMS) | Not Tested | [dignifiedquire/Daly-BMS (`daly_bms.rs`)](https://github.com/dignifiedquire/Daly-BMS/blob/feat/rated-capacity-battery-info-code/src/daly_bms.rs#L455-L470) |
-| `0x53` | Production Date & Raw Battery Operating Info | Not Tested | [dignifiedquire/Daly-BMS (`daly_bms.rs`)](https://github.com/dignifiedquire/Daly-BMS/blob/feat/rated-capacity-battery-info-code/src/daly_bms.rs#L475-L495) |
-| `0x57` | Multi-frame Serial Number / Battery Code | Not Tested | [dignifiedquire/Daly-BMS (`daly_bms.rs`)](https://github.com/dignifiedquire/Daly-BMS/blob/feat/rated-capacity-battery-info-code/src/daly_bms.rs#L500-L520) |
-| `0x61` | Real-Time Clock (RTC) Date & Time | Not Tested | [dignifiedquire/Daly-BMS (`daly_bms.rs`)](https://github.com/dignifiedquire/Daly-BMS/blob/feat/rated-capacity-battery-info-code/src/daly_bms.rs#L525-L540) |
-| `0x62` | Software / Firmware Version String (ASCII) | Not Tested | [dignifiedquire/Daly-BMS (`daly_bms.rs`)](https://github.com/dignifiedquire/Daly-BMS/blob/feat/rated-capacity-battery-info-code/src/daly_bms.rs#L545-L560) |
-| `0x63` | Hardware Version String (ASCII) | Not Tested | [dignifiedquire/Daly-BMS (`daly_bms.rs`)](https://github.com/dignifiedquire/Daly-BMS/blob/feat/rated-capacity-battery-info-code/src/daly_bms.rs#L565-L580) |
-| `0x94` | Status Frame (Byte 7 MOSFET Temp Variant) | Not Tested | [dignifiedquire/Daly-BMS (`daly_bms.rs`)](https://github.com/dignifiedquire/Daly-BMS/blob/feat/rated-capacity-battery-info-code/src/daly_bms.rs#L220-L235) |
-| `0x99` | Rated Capacity & Parameter Overview | Not Tested | [ESPHome Daly BMS Component](https://github.com/esphome/esphome/blob/dev/esphome/components/daly_bms/daly_bms.cpp#L120-L150) |
+| Command Code | Name | Description | Response Frames | Implementation |
+|---|---|---|---|---|
+| `0x50` | `RatedCapacity` | Rated (design) pack capacity and nominal cell voltage | 1 frame | `dalybms_lib::protocol::RatedCapacity` |
+| `0x51` | `BmsConfig` | Board number, series cell count, temperature sensor count | 1 frame | `dalybms_lib::protocol::BmsConfig` |
+| `0x52` | `BatteryStat` | Lifetime cumulative charged and discharged Ampere-hours (Ah) | 1 frame | `dalybms_lib::protocol::BatteryStat` |
+| `0x53` | `BatteryInfo` | Production date, raw operating mode, battery chemistry type, auto-sleep minutes | 1 frame | `dalybms_lib::protocol::BatteryInfo` |
+| `0x57` | `BatteryCode` | Serial number / battery identification string (ASCII) | 5 frames | `dalybms_lib::protocol::BatteryCode` |
+| `0x61` | `Rtc` | BMS internal Real-Time Clock date and time | 1 frame | `dalybms_lib::protocol::Rtc` |
+| `0x62` | `SoftwareVersion` | Master / software firmware version string (ASCII) | 2 frames | `dalybms_lib::protocol::SoftwareVersion` |
+| `0x63` | `HardwareVersion` | BMS hardware version string (ASCII) | 2 frames | `dalybms_lib::protocol::HardwareVersion` |
+| `0x94` (ext) | `Status` | MOSFET board temperature parsed from byte 7 (offset -40°C) | 1 frame | `dalybms_lib::protocol::Status::mosfet_temperature` |
 
 ---
 
@@ -35,145 +26,157 @@
 
 All Daly BMS UART/RS485 frames consist of 13 bytes:
 
-| Byte Index | Field Name | Description |
+| Byte Index | Field Name | Value / Description |
 |---|---|---|
 | `0` | Start Byte | Fixed header byte `0xA5` |
-| `1` | Address | `0x40` (Host) or `0x80` / `0x01` (BMS) |
-| `2` | Command Code | Command ID byte (e.g. `0x90`, `0x50`, `0x61`) |
+| `1` | Address | `0x40` (Host request) or `0x01` / `0x80` (BMS response) |
+| `2` | Command Code | Command ID byte (e.g. `0x50`, `0x51`, `0x52`, `0x53`, `0x57`, `0x61`, `0x62`, `0x63`) |
 | `3` | Data Length | Fixed payload size `0x08` (8 bytes) |
 | `4..11` | Payload Bytes | `DATA0` to `DATA7` |
-| `12` | Checksum | Sum modulo 256 of bytes 0 to 11 |
+| `12` | Checksum | Sum modulo 256 of bytes 0 to 11 (`calc_crc`) |
 
 ---
 
 ## Detailed Command Specifications & Byte Layouts
 
-### 1. Rated Capacity & Nominal Voltage (`0x50` / `0x99`)
+### 1. Rated Capacity & Nominal Voltage (`0x50`)
 
-* **Tested / Verification:** Not Tested
-* **References & Source Code:**
-  - Project: `dignifiedquire/Daly-BMS`
-  - File: [`src/daly_bms.rs`](https://github.com/dignifiedquire/Daly-BMS/blob/feat/rated-capacity-battery-info-code/src/daly_bms.rs#L410-L425)
-  - Commit: [`fab2b2bb`](https://github.com/dignifiedquire/Daly-BMS/commit/fab2b2bbcd5bf8d090e11562bda8bb19a2161e03#diff-97b7b1341c2c31c0e3e571e2be828a2a5)
-* **Description:** Depending on BMS firmware variant:
-  - On **DL_HKMS** series: `0x50` returns rated capacity and nominal cell voltage.
-  - On **Legacy V1.2**: `0x50` is used for RTC setting, while `0x99` returns rated capacity.
-* **Request (`Host -> BMS`):** `[0xA5, 0x40, 0x50, 0x08, 0, 0, 0, 0, 0, 0, 0, 0, CRC]`
+* **Struct:** `dalybms_lib::protocol::RatedCapacity`
+* **CLI Command:** `dalybms rated-capacity`
+* **Daemon Metric:** `rated-capacity`
+* **Request (`Host -> BMS`):**
+  ```text
+  [0xA5, 0x40, 0x50, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x3D]
+  ```
 * **Response Payload (`DATA0..DATA7`):**
-  - `DATA0..3`: Rated / Design Capacity in milli-Ah (u32 BE, divide by `1000.0` for Ah)
-  - `DATA4..7`: Nominal Cell Voltage in milli-Volts (u32 BE, divide by `1000.0` for V)
+  - `DATA0..3` (bytes 4..7): Rated / design pack capacity in milli-Ah (`u32` Big-Endian, divide by `1000.0` for Ah).
+  - `DATA4..7` (bytes 8..11): Nominal cell voltage in milli-Volts (`u32` Big-Endian, divide by `1000.0` for V).
 
 ---
 
-### 2. Lifetime Accumulated Charge & Discharge (`0x52`)
+### 2. BMS Configuration (`0x51`)
 
-* **Tested / Verification:** Not Tested
-* **References & Source Code:**
-  - Project: `dignifiedquire/Daly-BMS`
-  - File: [`src/daly_bms.rs`](https://github.com/dignifiedquire/Daly-BMS/blob/feat/rated-capacity-battery-info-code/src/daly_bms.rs#L455-L470)
-  - Commit: [`f8e10067`](https://github.com/dignifiedquire/Daly-BMS/commit/f8e100675ac3079cb74e7ac0062e1636b8e17b10)
-* **Description:** On newer firmware (e.g. DL_HKMS), `0x52` returns cumulative lifetime Ampere-hours charged and discharged.
-* **Request (`Host -> BMS`):** `[0xA5, 0x40, 0x52, 0x08, 0, 0, 0, 0, 0, 0, 0, 0, CRC]`
+* **Struct:** `dalybms_lib::protocol::BmsConfig`
+* **CLI Command:** `dalybms bms-config`
+* **Daemon Metric:** `bms-config`
+* **Request (`Host -> BMS`):**
+  ```text
+  [0xA5, 0x40, 0x51, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x3E]
+  ```
 * **Response Payload (`DATA0..DATA7`):**
-  - `DATA0..3`: Total Lifetime Charged Ah (u32 BE, divide by `1000.0` or `1.0` depending on scaling)
-  - `DATA4..7`: Total Lifetime Discharged Ah (u32 BE, divide by `1000.0` or `1.0`)
+  - `DATA0` (byte 4): Board (slave) number (`u8`).
+  - `DATA1` (byte 5): Number of series cells in primary string (`u8`).
+  - `DATA2..3` (bytes 6..7): Parallel string cell counts / reserved.
+  - `DATA4` (byte 8): Number of NTC temperature sensors (`u8`).
+  - `DATA5..7` (bytes 9..11): Reserved.
 
 ---
 
-### 3. Production Date & Operating Parameters (`0x53`)
+### 3. Lifetime Accumulated Charge & Discharge (`0x52`)
 
-* **Tested / Verification:** Not Tested
-* **References & Source Code:**
-  - Project: `dignifiedquire/Daly-BMS`
-  - File: [`src/daly_bms.rs`](https://github.com/dignifiedquire/Daly-BMS/blob/feat/rated-capacity-battery-info-code/src/daly_bms.rs#L475-L495)
-  - Commit: [`fab2b2bb`](https://github.com/dignifiedquire/Daly-BMS/commit/fab2b2bbcd5bf8d090e11562bda8bb19a2161e03)
-* **Description:** Reads production date and raw operating configuration flags.
-* **Request (`Host -> BMS`):** `[0xA5, 0x40, 0x53, 0x08, 0, 0, 0, 0, 0, 0, 0, 0, CRC]`
+* **Struct:** `dalybms_lib::protocol::BatteryStat`
+* **CLI Command:** `dalybms battery-stat`
+* **Daemon Metric:** `battery-stat`
+* **Request (`Host -> BMS`):**
+  ```text
+  [0xA5, 0x40, 0x52, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x3F]
+  ```
 * **Response Payload (`DATA0..DATA7`):**
-  - `DATA0`: Production Year (e.g. `22` = 2022)
-  - `DATA1`: Production Month (`1..12`)
-  - `DATA2`: Production Day (`1..31`)
-  - `DATA3`: Operating mode / battery type flag byte
-  - `DATA4`: Auto-sleep delay setting
-  - `DATA5..7`: Reserved
+  - `DATA0..3` (bytes 4..7): Cumulative lifetime charged Ah (`u32` Big-Endian).
+  - `DATA4..7` (bytes 8..11): Cumulative lifetime discharged Ah (`u32` Big-Endian).
 
 ---
 
-### 4. Multi-Frame Serial / Battery Code String (`0x57`)
+### 4. Production Date & Operating Parameters (`0x53`)
 
-* **Tested / Verification:** Not Tested
-* **References & Source Code:**
-  - Project: `dignifiedquire/Daly-BMS`
-  - File: [`src/daly_bms.rs`](https://github.com/dignifiedquire/Daly-BMS/blob/feat/rated-capacity-battery-info-code/src/daly_bms.rs#L500-L520)
-  - Commit: [`fab2b2bb`](https://github.com/dignifiedquire/Daly-BMS/commit/fab2b2bbcd5bf8d090e11562bda8bb19a2161e03)
-* **Description:** Reads battery code string across 5 concatenated response frames.
-* **Request (`Host -> BMS`):** `[0xA5, 0x40, 0x57, 0x08, 0, 0, 0, 0, 0, 0, 0, 0, CRC]`
-* **Response Payload:**
-  - Received across 5 frames with frame index in `DATA0` (`1..5`).
-  - `DATA1..7` of each frame contains ASCII string fragments.
-
----
-
-### 5. Real-Time Clock (RTC) Date & Time (`0x61` / `0x50`)
-
-* **Tested / Verification:** Not Tested
-* **References & Source Code:**
-  - Project: `dignifiedquire/Daly-BMS`
-  - File: [`src/daly_bms.rs`](https://github.com/dignifiedquire/Daly-BMS/blob/feat/rated-capacity-battery-info-code/src/daly_bms.rs#L525-L540)
-  - Commit: [`f8e10067`](https://github.com/dignifiedquire/Daly-BMS/commit/f8e100675ac3079cb74e7ac0062e1636b8e17b10)
-* **Description:** On modern firmware (DL_HKMS), `0x61` reads or sets the BMS internal clock.
-* **Request Payload (`DATA0..DATA7`):**
-  - `DATA0`: Year (e.g. `24` for 2024)
-  - `DATA1`: Month (`1..12`)
-  - `DATA2`: Day of Month (`1..31`)
-  - `DATA3`: Hour (`0..23`)
-  - `DATA4`: Minute (`0..59`)
-  - `DATA5`: Second (`0..59`)
-  - `DATA6..7`: `0x00`
+* **Struct:** `dalybms_lib::protocol::BatteryInfo`
+* **CLI Command:** `dalybms battery-info`
+* **Daemon Metric:** `battery-info`
+* **Request (`Host -> BMS`):**
+  ```text
+  [0xA5, 0x40, 0x53, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40]
+  ```
+* **Response Payload (`DATA0..DATA7`):**
+  - `DATA0` (byte 4): Raw operating mode byte (`u8`).
+  - `DATA1` (byte 5): Raw battery type / chemistry byte (`u8`).
+  - `DATA2` (byte 6): Production year offset from 2000 (`production_year = byte + 2000`).
+  - `DATA3` (byte 7): Production month (`1..12`).
+  - `DATA4` (byte 8): Production day (`1..31`).
+  - `DATA5` (byte 9): Auto-sleep delay in minutes (`u8`).
+  - `DATA6..7` (bytes 10..11): Reserved.
 
 ---
 
-### 6. Software & Hardware Version Strings (`0x62` / `0x63`)
+### 5. Multi-Frame Serial Number / Battery Code String (`0x57`)
 
-* **Tested / Verification:** Not Tested
-* **References & Source Code:**
-  - Project: `dignifiedquire/Daly-BMS`
-  - File: [`src/daly_bms.rs`](https://github.com/dignifiedquire/Daly-BMS/blob/feat/rated-capacity-battery-info-code/src/daly_bms.rs#L545-L580)
-  - Commit: [`f8e10067`](https://github.com/dignifiedquire/Daly-BMS/commit/f8e100675ac3079cb74e7ac0062e1636b8e17b10)
+* **Struct:** `dalybms_lib::protocol::BatteryCode`
+* **CLI Command:** `dalybms battery-code`
+* **Daemon Metric:** `battery-code`
+* **Request (`Host -> BMS`):**
+  ```text
+  [0xA5, 0x40, 0x57, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x44]
+  ```
+* **Response Structure (5 Frames, 65 Bytes total):**
+  - Arrives as 5 frames with 1-based frame index in `DATA0` (byte 4).
+  - Bytes 5..11 (`DATA1..DATA7`) of each frame contain 7 ASCII characters (35 characters total).
+  - Null bytes (`\0`) are stripped and collapsed to spaces.
+
+---
+
+### 6. Real-Time Clock (RTC) Date & Time (`0x61`)
+
+* **Struct:** `dalybms_lib::protocol::Rtc`
+* **CLI Command:** `dalybms rtc`
+* **Daemon Metric:** `rtc`
+* **Request (`Host -> BMS`):**
+  ```text
+  [0xA5, 0x40, 0x61, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x4E]
+  ```
+* **Response Payload (`DATA0..DATA7`):**
+  - `DATA0` (byte 4): Year offset from 2000 (`year = byte + 2000`).
+  - `DATA1` (byte 5): Month (`1..12`).
+  - `DATA2` (byte 6): Day (`1..31`).
+  - `DATA3` (byte 7): Hour (`0..23`).
+  - `DATA4` (byte 8): Minute (`0..59`).
+  - `DATA5` (byte 9): Second (`0..59`).
+  - `DATA6..7` (bytes 10..11): Reserved (`0x00`).
+
+---
+
+### 7. Software / Master Version String (`0x62`)
+
+* **Struct:** `dalybms_lib::protocol::SoftwareVersion`
+* **CLI Command:** `dalybms software-version`
+* **Daemon Metric:** `software-version`
+* **Request (`Host -> BMS`):**
+  ```text
+  [0xA5, 0x40, 0x62, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x4F]
+  ```
+* **Response Structure (2 Frames, 26 Bytes total):**
+  - Arrives as 2 frames with frame index in `DATA0` (byte 4).
+  - Bytes 5..11 (`DATA1..DATA7`) of each frame contain 7 ASCII characters (14 characters total, e.g. `"12_250520_BRST"`).
+
+---
+
+### 8. Hardware Version String (`0x63`)
+
+* **Struct:** `dalybms_lib::protocol::HardwareVersion`
+* **CLI Command:** `dalybms hardware-version`
+* **Daemon Metric:** `hardware-version`
+* **Request (`Host -> BMS`):**
+  ```text
+  [0xA5, 0x40, 0x63, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x50]
+  ```
+* **Response Structure (2 Frames, 26 Bytes total):**
+  - Arrives as 2 frames with frame index in `DATA0` (byte 4).
+  - Bytes 5..11 (`DATA1..DATA7`) of each frame contain 7 ASCII characters (14 characters total, e.g. `"H2.1_103E_30XF"`).
+
+---
+
+### 9. Status Frame MOSFET Temperature (`0x94`, Byte 7)
+
+* **Field:** `dalybms_lib::protocol::Status::mosfet_temperature: Option<i8>`
 * **Description:**
-  - `0x62`: Software/Firmware Version ASCII String (multi-frame)
-  - `0x63`: Hardware Version ASCII String (multi-frame)
-* **Request (`Host -> BMS`):** `[0xA5, 0x40, <0x62|0x63>, 0x08, 0, 0, 0, 0, 0, 0, 0, 0, CRC]`
-* **Response Payload:** `DATA0` contains frame sequence number; `DATA1..7` contains ASCII string.
-
----
-
-### 7. Status Frame Byte 7 MOSFET Temperature Variant (`0x94`)
-
-* **Tested / Verification:** Not Tested
-* **References & Source Code:**
-  - Project: `dignifiedquire/Daly-BMS`
-  - File: [`src/daly_bms.rs`](https://github.com/dignifiedquire/Daly-BMS/blob/feat/rated-capacity-battery-info-code/src/daly_bms.rs#L220-L235)
-  - Commit: [`72d86a59`](https://github.com/dignifiedquire/Daly-BMS/commit/72d86a5939b4990835fbe7cca2aa6e8a4312999d)
-* **Description:** Standard status command `0x94`. On select firmware variants, `DATA7` (byte index 7) reports the MOSFET / board temperature in degrees Celsius with a -40°C offset.
-* **Conversion:** `temperature = (DATA7 as i16) - 40` (Valid when `DATA7 > 0`).
-
----
-
-### 8. Protection Threshold Settings (`0x10` .. `0x26`)
-
-* **Tested / Verification:** Not Tested
-* **References & Source Code:**
-  - Project: `Louisvdw/dbus-serialbattery`
-  - File: [`etc/dbus-serialbattery/bms/daly.py`](https://github.com/Louisvdw/dbus-serialbattery/blob/master/etc/dbus-serialbattery/bms/daly.py#L180-L220)
-* **Cell Overvoltage (`0x10` Read / `0x20` Write):**
-  - `DATA0..1`: Overvoltage Trigger Voltage (u16 BE, mV, e.g. `3650` = 3.650V)
-  - `DATA2..3`: Overvoltage Release Voltage (u16 BE, mV, e.g. `3550` = 3.550V)
-  - `DATA4`: Protection Delay (seconds)
-* **Cell Undervoltage (`0x11` Read / `0x21` Write):**
-  - `DATA0..1`: Undervoltage Trigger Voltage (u16 BE, mV, e.g. `2500` = 2.500V)
-  - `DATA2..3`: Undervoltage Release Voltage (u16 BE, mV, e.g. `2800` = 2.800V)
-  - `DATA4`: Protection Delay (seconds)
-* **Balance Start Voltage & Delta (`0x16` Read / `0x26` Write):**
-  - `DATA0..1`: Balance Start Voltage (u16 BE, mV, e.g. `3400` = 3.400V)
-  - `DATA2..3`: Balance Start Differential Voltage (u16 BE, mV, e.g. `30` = 0.030V)
+  - Standard status command (`0x94`).
+  - On supported firmware versions (e.g. DL_HKMS series), byte index 7 (`DATA3`) reports the internal MOSFET / board temperature in degrees Celsius with a -40°C offset.
+  - When byte 7 is non-zero, `mosfet_temperature = Some((byte7 as i16 - 40) as i8)`. When zero (unsupported firmware), it is `None`.

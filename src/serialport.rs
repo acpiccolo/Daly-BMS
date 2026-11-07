@@ -155,28 +155,65 @@ impl DalyBMS {
         Ok(())
     }
 
-    /// Private helper to receive the reply frames of a request from the serial port.
-    /// Bytes not belonging to the reply (e.g. a late reply to an earlier request) are skipped.
-    fn receive_frames(&mut self, tx_buffer: &[u8], reply_size: usize) -> Result<Vec<u8>> {
-        let mut reader = FrameReader::new(tx_buffer, reply_size);
-        while !reader.is_complete() {
-            let mut rx_buffer = vec![0; reader.missing()];
-
-            log::trace!("read {} bytes", rx_buffer.len());
-            self.serial.read_exact(&mut rx_buffer)?;
-
-            log::trace!("receive bytes: {rx_buffer:02X?}");
-            reader.push(&rx_buffer)?;
+    /// Reads exactly one 13-byte frame, first resyncing to the `0xA5` start byte
+    /// (dropping any bytes before it). Resyncing per frame means a preceding
+    /// stray/late frame can't leave us reading from a mid-frame offset.
+    fn receive_one_frame(&mut self) -> Result<[u8; RX_BUFFER_LENGTH]> {
+        let mut byte = [0u8; 1];
+        loop {
+            self.serial.read_exact(&mut byte)?;
+            if byte[0] == START_BYTE {
+                break;
+            }
         }
+        let mut frame = [0u8; RX_BUFFER_LENGTH];
+        frame[0] = START_BYTE;
+        self.serial.read_exact(&mut frame[1..])?;
+        log::trace!("frame: {frame:02X?}");
+        Ok(frame)
+    }
 
+    /// Receives `reply_size` bytes (a whole number of 13-byte frames) of the
+    /// BMS's reply to the command we just sent, frame by frame.
+    ///
+    /// Some Daly units carry an on-board Bluetooth/UART module that polls the BMS
+    /// over the *same* internal serial bus; its request frames (`A5 40 ..`) and
+    /// the BMS's answers to *them* (`A5 01 <other-cmd> ..`) leak onto our port
+    /// and, read blindly, get mis-decoded as our reply. So we keep only genuine
+    /// BMS replies to the command we asked for (see [`is_reply_for`]) and skip
+    /// everything else. Per-frame checksum is validated downstream in each
+    /// `decode`.
+    fn receive_frames(&mut self, expected_cmd: u8, reply_size: usize) -> Result<Vec<u8>> {
+        let n_frames = reply_size / RX_BUFFER_LENGTH;
+        let mut out = Vec::with_capacity(reply_size);
+        // Bound the resync so a line flooded with foreign frames fails the read
+        // (→ retry/reconnect) instead of spinning forever.
+        let mut skip_budget = (n_frames + 1) * MAX_STRAY_FRAMES_PER_FRAME;
+        while out.len() < n_frames * RX_BUFFER_LENGTH {
+            let frame = self.receive_one_frame()?;
+            if is_reply_for(&frame, expected_cmd) {
+                out.extend_from_slice(&frame);
+            } else {
+                log::trace!(
+                    "skip stray frame addr=0x{:02X} cmd=0x{:02X} (want addr=0x{BMS_ADDRESS:02X} cmd=0x{expected_cmd:02X})",
+                    frame[ADDRESS_INDEX],
+                    frame[COMMAND_INDEX]
+                );
+                skip_budget = skip_budget
+                    .checked_sub(1)
+                    .ok_or(Error::DalyError(crate::Error::FrameNoError))?;
+            }
+        }
         self.last_execution = Instant::now(); // Update last execution time after successful read
-
-        Ok(reader.into_bytes())
+        Ok(out)
     }
 
     fn send_and_receive(&mut self, tx_buffer: &[u8], reply_size: usize) -> Result<Vec<u8>> {
         self.send_bytes(tx_buffer)?;
-        self.receive_frames(tx_buffer, reply_size)
+        // The command we asked for — everything not addressed from the BMS for
+        // this command (stray BT-module traffic on the shared bus) is skipped.
+        let expected_cmd = tx_buffer[COMMAND_INDEX];
+        self.receive_frames(expected_cmd, reply_size)
     }
 
     /// Sets the timeout for serial port I/O operations.
@@ -444,6 +481,121 @@ impl DalyBMS {
                 Ok(ErrorCode::decode(
                     &bms.send_and_receive(tx_buffer, reply_size)?,
                 )?)
+            },
+        )
+    }
+
+    /// Retrieves the rated (design) capacity and nominal cell voltage.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing the `RatedCapacity` data or an `Error`.
+    pub fn get_rated_capacity(&mut self) -> Result<RatedCapacity> {
+        log::trace!("get rated capacity");
+        self.request_with_retry(
+            &RatedCapacity::request(Address::Host),
+            RatedCapacity::reply_size(),
+            |bms, tx_buffer, reply_size| {
+                Ok(RatedCapacity::decode(
+                    &bms.send_and_receive(tx_buffer, reply_size)?,
+                )?)
+            },
+        )
+    }
+
+    /// Retrieves battery info: production date plus raw operating-mode, type and
+    /// auto-sleep bytes.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing the `BatteryInfo` data or an `Error`.
+    pub fn get_battery_info(&mut self) -> Result<BatteryInfo> {
+        log::trace!("get battery info");
+        self.request_with_retry(
+            &BatteryInfo::request(Address::Host),
+            BatteryInfo::reply_size(),
+            |bms, tx_buffer, reply_size| {
+                Ok(BatteryInfo::decode(
+                    &bms.send_and_receive(tx_buffer, reply_size)?,
+                )?)
+            },
+        )
+    }
+
+    /// Retrieves the battery code / serial string (fixed 5-frame reply).
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing the `BatteryCode` (dereferences to `&str`) or an `Error`.
+    pub fn get_battery_code(&mut self) -> Result<BatteryCode> {
+        log::trace!("get battery code");
+        self.request_with_retry(
+            &BatteryCode::request(Address::Host),
+            BatteryCode::reply_size(),
+            |bms, tx_buffer, reply_size| {
+                Ok(BatteryCode::decode(
+                    &bms.send_and_receive(tx_buffer, reply_size)?,
+                )?)
+            },
+        )
+    }
+
+    /// Retrieves the lifetime accumulated charge/discharge Ah (`0x52`).
+    pub fn get_battery_stat(&mut self) -> Result<BatteryStat> {
+        log::trace!("get battery stat");
+        self.request_with_retry(
+            &BatteryStat::request(Address::Host),
+            BatteryStat::reply_size(),
+            |bms, tx_buffer, reply_size| {
+                Ok(BatteryStat::decode(&bms.send_and_receive(tx_buffer, reply_size)?)?)
+            },
+        )
+    }
+
+    /// Retrieves the BMS config: board / cell / NTC counts (`0x51`).
+    pub fn get_bms_config(&mut self) -> Result<BmsConfig> {
+        log::trace!("get bms config");
+        self.request_with_retry(
+            &BmsConfig::request(Address::Host),
+            BmsConfig::reply_size(),
+            |bms, tx_buffer, reply_size| {
+                Ok(BmsConfig::decode(&bms.send_and_receive(tx_buffer, reply_size)?)?)
+            },
+        )
+    }
+
+    /// Retrieves the BMS real-time clock (`0x61`).
+    pub fn get_rtc(&mut self) -> Result<Rtc> {
+        log::trace!("get rtc");
+        self.request_with_retry(
+            &Rtc::request(Address::Host),
+            Rtc::reply_size(),
+            |bms, tx_buffer, reply_size| {
+                Ok(Rtc::decode(&bms.send_and_receive(tx_buffer, reply_size)?)?)
+            },
+        )
+    }
+
+    /// Retrieves the software/master version string (`0x62`).
+    pub fn get_software_version(&mut self) -> Result<SoftwareVersion> {
+        log::trace!("get software version");
+        self.request_with_retry(
+            &SoftwareVersion::request(Address::Host),
+            SoftwareVersion::reply_size(),
+            |bms, tx_buffer, reply_size| {
+                Ok(SoftwareVersion::decode(&bms.send_and_receive(tx_buffer, reply_size)?)?)
+            },
+        )
+    }
+
+    /// Retrieves the hardware version string (`0x63`).
+    pub fn get_hardware_version(&mut self) -> Result<HardwareVersion> {
+        log::trace!("get hardware version");
+        self.request_with_retry(
+            &HardwareVersion::request(Address::Host),
+            HardwareVersion::reply_size(),
+            |bms, tx_buffer, reply_size| {
+                Ok(HardwareVersion::decode(&bms.send_and_receive(tx_buffer, reply_size)?)?)
             },
         )
     }
