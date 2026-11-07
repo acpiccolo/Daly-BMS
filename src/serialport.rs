@@ -179,7 +179,7 @@ impl DalyBMS {
     /// Some Daly units carry an on-board Bluetooth/UART module that polls the BMS
     /// over the *same* internal serial bus; its request frames (`A5 40 ..`) and
     /// the BMS's answers to *them* (`A5 01 <other-cmd> ..`) leak onto our port
-    /// and, read blindly, get mis-decoded as our reply. So we keep only genuine
+    /// and, read blindly, get incorrectly decoded as our reply. So we keep only genuine
     /// BMS replies to the command we asked for (see [`is_reply_for`]) and skip
     /// everything else. Per-frame checksum is validated downstream in each
     /// `decode`.

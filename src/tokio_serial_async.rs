@@ -270,7 +270,7 @@ impl DalyBMS {
     /// Some Daly units carry an on-board Bluetooth/UART module that polls the
     /// BMS over the *same* internal serial bus. Its request frames (`A5 40 ..`)
     /// — and the BMS's answers to *them* (`A5 01 <other-cmd> ..`) — leak onto
-    /// our port; read blindly they get mis-decoded as our reply (garbage on a
+    /// our port; read blindly they get incorrectly decoded as our reply (garbage on a
     /// single-frame read, "frame out of order" on a multi-frame one). So we keep
     /// only frames that are from the BMS ([`BMS_ADDRESS`]) *for the command we
     /// asked for* (`expected_cmd`), and skip everything else. Per-frame checksum
