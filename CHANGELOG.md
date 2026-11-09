@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0](https://github.com/acpiccolo/Daly-BMS/compare/v0.2.0...v0.3.0) - 2026-11-09
+
+### Added
+
+- integrate fork commits from feat/rated-capacity-battery-info-code and align CLI/daemon
+- integrate fork commits from feat/rated-capacity-battery-info-code and align CLI/daemon
+- *(mqtt)* track connection status transitions with AtomicBool
+- *(mqtt)* add explicit disconnect on daemon shutdown and remove alias
+- improve safety checks, CLI options, daemon handling and MQTT config
+- implement codebase improvements, safety checks and dependency updates
+- *(cli)* use --mqtt-config option flag and align README.md with reference format
+- implement codebase improvements, safety checks and dependency updates
+
+### Fixed
+
+- *(mqtt)* fix operation_timeout typo and mask password in Debug logging
+- *(clippy)* resolve clippy warnings for useless_vec and type_complexity
+
+### Other
+
+- cleanup unimplemented commands specification ([#104](https://github.com/acpiccolo/Daly-BMS/pull/104))
+- *(deps)* bump crate-ci/typos from 1.51.1 to 1.52.0
+- add repository and code line URLs to additional commands specification
+- expand additional commands documentation with verification status and firmware variants
+- add byte layout documentation for additional Daly BMS commands
+- *(daemon)* use Condvar for graceful shutdown wait timeout
+- update MQTT documentation in README.md to match reference format
+
 ## [0.2.0](https://github.com/acpiccolo/Daly-BMS/compare/v0.1.7...v0.2.0) - 2026-10-17
 
 ### Fixed
